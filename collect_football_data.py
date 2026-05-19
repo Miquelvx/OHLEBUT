@@ -183,8 +183,10 @@ def collect_competition(comp_id: int, comp_name: str, season: str) -> bool:
             if status not in ("FT", "AET", "PEN"):
                 continue
 
-            home_goals = goals.get("home")
-            away_goals = goals.get("away")
+            home_goals   = goals.get("home")
+            away_goals   = goals.get("away")
+            penalty_home = f.get("score", {}).get("penalty", {}).get("home")
+            penalty_away = f.get("score", {}).get("penalty", {}).get("away")
 
             # Ignorer si les scores sont manquants malgré le statut FT
             if home_goals is None or away_goals is None:
@@ -225,8 +227,9 @@ def collect_competition(comp_id: int, comp_name: str, season: str) -> bool:
                     season, stage, match_date,
                     home_team_id, away_team_id,
                     home_goals, away_goals, goal_diff, result,
-                    neutral_venue, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    neutral_venue, status,
+                    penalty_home, penalty_away
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(match_id) DO NOTHING
             """, (
                 fixture["id"],
@@ -244,6 +247,8 @@ def collect_competition(comp_id: int, comp_name: str, season: str) -> bool:
                 _result(home_goals, away_goals),
                 neutral,
                 status,
+                penalty_home,
+                penalty_away,
             ))
             inserted += c.rowcount
 

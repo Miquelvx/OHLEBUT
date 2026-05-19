@@ -15,6 +15,79 @@ sys.path.append(os.path.dirname(__file__))
 from init_db import get_connection
 
 
+def add_result_columns():
+    """
+    Ajoute les colonnes result_90 et result_winner à la table matches.
+
+    - result_90   : résultat à 90 minutes (H/D/A), jamais influencé par les
+                    prolongations ou les tirs au but
+    - result_winner : vainqueur effectif (H/A uniquement), utile pour les
+                    phases finales. Égal à result_90 sauf pour AET et PEN
+                    où on détermine le vainqueur depuis le score réel.
+
+    Statuts API-Football :
+      FT  = Match Finished (90 min)
+      AET = After Extra Time (prolongations)
+      PEN = Penalties (tirs au but, score à 90min souvent à égalité)
+    """
+    conn = get_connection()
+    c    = conn.cursor()
+
+    # Ajouter les colonnes si elles n'existent pas encore
+    for col in ["result_90", "result_winner"]:
+        try:
+            c.execute(f"ALTER TABLE matches ADD COLUMN {col} TEXT")
+        except Exception:
+            pass  # colonne déjà existante
+
+    # result_90 : basé sur home_goals - away_goals à 90min
+    # Pour AET/PEN, le score final inclut les prolongations mais pas les pénaltys
+    # On utilise le goal_diff pour déterminer le résultat à 90min
+    # Note : pour les PEN, le score à 90min est toujours nul → result_90 = D
+    c.execute("""
+        UPDATE matches SET result_90 = CASE
+            WHEN status = 'PEN' THEN 'D'
+            WHEN goal_diff > 0   THEN 'H'
+            WHEN goal_diff < 0   THEN 'A'
+            ELSE                      'D'
+        END
+    """)
+
+    # Ajouter les colonnes penalty si elles n'existent pas (migration DB existante)
+    for col in ["penalty_home", "penalty_away"]:
+        try:
+            c.execute(f"ALTER TABLE matches ADD COLUMN {col} INTEGER")
+        except Exception:
+            pass
+
+    # result_winner : vainqueur effectif du match
+    # - FT/AET : basé sur le goal_diff (prolongations incluses)
+    # - PEN    : basé sur penalty_home vs penalty_away
+    # - Nul en phase de groupe : NULL (pas de vainqueur)
+    c.execute("""
+        UPDATE matches SET result_winner = CASE
+            WHEN status = 'PEN' AND penalty_home > penalty_away THEN 'H'
+            WHEN status = 'PEN' AND penalty_away > penalty_home THEN 'A'
+            WHEN goal_diff > 0                                  THEN 'H'
+            WHEN goal_diff < 0                                  THEN 'A'
+            ELSE NULL
+        END
+    """)
+
+    conn.commit()
+
+    # Vérification
+    c.execute("SELECT status, result_90, result_winner, COUNT(*) FROM matches GROUP BY status, result_90, result_winner ORDER BY status")
+    rows = c.fetchall()
+    conn.close()
+
+    print(f"🔄 Colonnes result_90 et result_winner calculées :")
+    print(f"   {'Status':<8} {'result_90':<12} {'result_winner':<15} {'Nb matchs':>10}")
+    print(f"   {'─'*50}")
+    for status, r90, rw, nb in rows:
+        print(f"   {str(status):<8} {str(r90):<12} {str(rw):<15} {nb:>10}")
+
+
 def clean_friendlies():
     conn = get_connection()
     c    = conn.cursor()
@@ -116,6 +189,7 @@ if __name__ == "__main__":
     print("  Nettoyage du training set")
     print("=" * 55)
 
+    add_result_columns()
     clean_friendlies()
     update_collection_log()
     print_summary()

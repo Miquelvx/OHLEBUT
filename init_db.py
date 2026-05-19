@@ -22,7 +22,7 @@ def get_connection():
 def init_db():
     conn = get_connection()
     c = conn.cursor()
- 
+
     # ------------------------------------------------------------------
     # Table : teams
     # Référentiel de toutes les équipes nationales rencontrées.
@@ -42,7 +42,7 @@ def init_db():
             apif_id             INTEGER                             -- ID API-Football
         )
     """)
- 
+
     # Table de correspondance externe → interne
     c.execute("""
         CREATE TABLE IF NOT EXISTS team_id_map (
@@ -52,7 +52,7 @@ def init_db():
             PRIMARY KEY (source, external_id)
         )
     """)
- 
+
     # ------------------------------------------------------------------
     # Table : matches  (training set)
     # Matchs TERMINÉS entre la CdM 2022 et la CdM 2026.
@@ -75,10 +75,12 @@ def init_db():
             goal_diff       INTEGER NOT NULL,      -- home_goals - away_goals
             result          TEXT    NOT NULL,      -- 'H' | 'D' | 'A'
             neutral_venue   INTEGER DEFAULT 0,     -- 1 = terrain neutre
-            status          TEXT                   -- 'FT', 'AET', 'PEN'
+            status          TEXT,                  -- 'FT', 'AET', 'PEN'
+            penalty_home    INTEGER,               -- score tirs au but domicile (NULL si pas de PEN)
+            penalty_away    INTEGER                -- score tirs au but extérieur (NULL si pas de PEN)
         )
     """)
- 
+
     # ------------------------------------------------------------------
     # Table : wc2026_fixtures  (données de prédiction)
     # Tous les matchs de la CdM 2026, phases de groupe ET phases finales.
@@ -106,7 +108,7 @@ def init_db():
             actual_result       TEXT                   -- 'H' | 'D' | 'A' après le match
         )
     """)
- 
+
     # ------------------------------------------------------------------
     # Table : collection_log
     # Checkpoint par (source, competition_id, season).
@@ -126,64 +128,67 @@ def init_db():
             UNIQUE(source, competition_id, season)
         )
     """)
- 
+
     conn.commit()
     conn.close()
     print("✅  Base de données initialisée : data/wc2026.db")
     print("    Tables : teams | matches | wc2026_fixtures | collection_log")
- 
- 
+
+
 def seed_collection_log():
     """
     Pré-remplit collection_log avec toutes les compétitions à collecter
     via API-Football (training set uniquement).
     La CdM 2026 est gérée séparément par collect_football_data.py.
     """
- 
+
     # Format : (source, competition_id, competition_name, season)
     COMPETITIONS = [
         # CdM 2022
-        ("api_football",   1,  "World Cup",          "2022"),
- 
+        ("api_football",   1,  "FIFA World Cup 2022",          "2022"),
+
         # Qualifications CdM 2026 (IDs et saisons corrigés)
-        ("api_football",  32,  "World Cup - Qualification Europe",                     "2024"),
-        ("api_football",  34,  "World Cup - Qualification South America",              "2026"),
-        ("api_football",  29,  "World Cup - Qualification Africa",                     "2023"),
-        ("api_football",  30,  "World Cup - Qualification Asia",                       "2026"),
-        ("api_football",  31,  "World Cup - Qualification CONCACAF",                   "2026"),
-        ("api_football",  33,  "World Cup - Qualification Oceania",                    "2026"),
-        ("api_football",  37,  "World Cup - Qualification Intercontinental Play-offs", "2026"),
- 
+        ("api_football",  32,  "WC Qualification Europe",      "2024"),
+        ("api_football",  34,  "WC Qualification CONMEBOL",    "2026"),
+        ("api_football",  29,  "WC Qualification CAF",         "2023"),
+        ("api_football",  30,  "WC Qualification Asia",        "2026"),
+        ("api_football",  31,  "WC Qualification CONCACAF",    "2026"),
+        ("api_football",  33,  "WC Qualification OFC",         "2026"),
+        ("api_football",  37,  "WC Qualification Intercontinental", "2026"),
+
         # UEFA Nations League
         ("api_football",   5,  "UEFA Nations League",          "2022"),
         ("api_football",   5,  "UEFA Nations League",          "2024"),
- 
+
         # Euro 2024
-        ("api_football", 960,  "Euro Championship - Qualification",    "2023"),
-        ("api_football",   4,  "Euro Championship",                    "2024"),
- 
+        ("api_football", 960,  "Euro 2024 Qualifications",     "2023"),
+        ("api_football",   4,  "UEFA Euro",                    "2024"),
+
         # Tournois continentaux
-        ("api_football",   9,  "Copa America",                 "2024"),
+        ("api_football",   9,  "Copa América",                 "2024"),
         ("api_football",   6,  "Africa Cup of Nations",        "2023"),
         ("api_football",   6,  "Africa Cup of Nations",        "2025"),
-        ("api_football",   7,  "Asian Cup",                    "2023"),
+        ("api_football",   7,  "AFC Asian Cup",                "2023"),
+
+        # CONCACAF Gold Cup (ID corrigé : 22, pas 16)
         ("api_football",  22,  "CONCACAF Gold Cup",            "2023"),
         ("api_football",  22,  "CONCACAF Gold Cup",            "2025"),
+
+        # CONCACAF Nations League (3 éditions sur la période)
         ("api_football", 536,  "CONCACAF Nations League",      "2022"),
         ("api_football", 536,  "CONCACAF Nations League",      "2023"),
         ("api_football", 536,  "CONCACAF Nations League",      "2024"),
- 
+
         # Matchs amicaux
-        ("api_football",  10,  "Friendlies",                   "2023"),
-        ("api_football",  10,  "Friendlies",                   "2024"),
-        ("api_football",  10,  "Friendlies",                   "2025"),
-        ("api_football",  10,  "Friendlies",                   "2026"),
+        ("api_football",  10,  "International Friendlies",     "2023"),
+        ("api_football",  10,  "International Friendlies",     "2024"),
+        ("api_football",  10,  "International Friendlies",     "2025"),
     ]
- 
+
     conn = get_connection()
     c = conn.cursor()
     inserted = 0
- 
+
     for (source, comp_id, comp_name, season) in COMPETITIONS:
         try:
             c.execute("""
@@ -194,12 +199,12 @@ def seed_collection_log():
             inserted += c.rowcount
         except sqlite3.Error as e:
             print(f"  ⚠️  Erreur insertion {comp_name} {season} : {e}")
- 
+
     conn.commit()
     conn.close()
     print(f"✅  collection_log initialisé : {inserted} compétitions en attente")
- 
- 
+
+
 if __name__ == "__main__":
     init_db()
     seed_collection_log()

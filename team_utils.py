@@ -4,14 +4,13 @@ Utilitaires pour la gestion des équipes dans la base de données.
 Principe de déduplication :
   - Chaque équipe a un ID interne auto-incrémenté (teams.team_id)
   - La clé de déduplication est le nom normalisé (minuscules, sans accents)
-  - Une table team_id_map fait le lien entre les IDs externes (football-data.org
-    et API-Football) et l'ID interne
+  - Une table team_id_map fait le lien entre les IDs externes et l'ID interne
   - Toutes les FK dans matches et wc2026_fixtures pointent vers teams.team_id
 
-Filtrage des équipes parasites :
-  - On filtre les équipes U21, U23, U20, U19, U18, U17
-  - On filtre les équipes de club (Real España, etc.) qui peuvent apparaître
-    dans certaines compétitions sur API-Football
+Filtrage :
+  - Équipes U21/U23/olympiques/réserves filtrées par regex
+  - Clubs de football filtrés par liste explicite
+  - Territoires non-FIFA filtrés par liste explicite
 """
 
 import re
@@ -19,22 +18,47 @@ import unicodedata
 
 
 # ------------------------------------------------------------------
-# Mots-clés qui signalent une équipe NON senior / NON nationale
+# Mots-clés signalant une équipe non-senior
 # ------------------------------------------------------------------
 _EXCLUDED_KEYWORDS = [
-    r"\bU\d{2}\b",          # U21, U23, U20, U19, U18, U17...
-    r"\bUnder.?\d{2}\b",    # Under-21, Under 21
-    r"\bOlympic\b",         # équipes olympiques
+    r"\bU\d{2}\b",
+    r"\bUnder.?\d{2}\b",
+    r"\bOlympic\b",
     r"\bOlympics\b",
-    r"\bB\b",               # équipes B (ex: "France B")
-    r"\bReserves?\b",       # équipes réserve
+    r"\bReserves?\b",
 ]
 _EXCLUDED_RE = re.compile("|".join(_EXCLUDED_KEYWORDS), re.IGNORECASE)
 
+# ------------------------------------------------------------------
+# Clubs infiltrés via certaines compétitions CONCACAF/amicaux
+# ------------------------------------------------------------------
+EXCLUDED_CLUBS = {
+    "Leon", "Los Angeles FC", "Philadelphia Union", "Tigres UANL",
+    "Atlas", "Vancouver Whitecaps", "CD Motagua", "CD Olimpia",
+    "CF Pachuca", "LD Alajuelense", "Orlando City SC", "Tauro FC",
+    "Real Espana", "Alianza", "Austin", "Violette AC",
+    "Alanyaspor", "Hull City", "Ghana B",
+}
+
+# ------------------------------------------------------------------
+# Territoires sans classement FIFA officiel
+# ------------------------------------------------------------------
+EXCLUDED_TERRITORIES = {
+    "Guadeloupe", "Martinique", "French Guyana", "Sint Maarten",
+    "Saint Martin", "Bonaire", "Basque Country", "Mação",
+    "Kosovo B", "Catalonia",
+}
+
 
 def is_national_senior(team_name: str) -> bool:
-    """Retourne True si le nom correspond à une équipe nationale senior."""
-    return not bool(_EXCLUDED_RE.search(team_name))
+    """Retourne True si l'équipe est une sélection nationale senior valide."""
+    if team_name in EXCLUDED_CLUBS:
+        return False
+    if team_name in EXCLUDED_TERRITORIES:
+        return False
+    if _EXCLUDED_RE.search(team_name):
+        return False
+    return True
 
 
 # ------------------------------------------------------------------
@@ -43,42 +67,104 @@ def is_national_senior(team_name: str) -> bool:
 
 def normalize_name(name: str) -> str:
     """
-    Normalise un nom d'équipe pour la déduplication.
-    Ex: 'Côte d\'Ivoire' → 'cote d ivoire'
-        'Korea Republic' → 'korea republic'
+    Transforme un nom d'équipe en clé de déduplication :
+    minuscules, sans accents, sans ponctuation, espaces uniques.
+
+    Ex : "Côte d'Ivoire"       → "cote d ivoire"
+         "Bosnia-Herzegovina"  → "bosnia herzegovina"
+         "Türkiye"             → "turkiye"
+         "St. Lucia"           → "st lucia"
     """
-    # Décomposition unicode puis suppression des accents
-    nfkd = unicodedata.normalize("NFKD", name)
-    ascii_name = nfkd.encode("ascii", "ignore").decode("ascii")
-    # Minuscules et suppression des caractères spéciaux
-    cleaned = re.sub(r"[^a-z0-9 ]", " ", ascii_name.lower())
-    # Normalisation des espaces
+    nfkd    = unicodedata.normalize("NFKD", name)
+    ascii_n = nfkd.encode("ascii", "ignore").decode("ascii")
+    cleaned = re.sub(r"[^a-z0-9 ]", " ", ascii_n.lower())
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
 # ------------------------------------------------------------------
-# Correspondances manuelles pour les noms qui diffèrent entre sources
+# Correspondances manuelles : nom normalisé → nom normalisé canonique
+#
+# RÈGLE ABSOLUE :
+#   - Les CLÉS   sont le résultat de normalize_name(nom_api)
+#   - Les VALEURS sont le résultat de normalize_name(nom_fifa_exact)
+#
+# Cela garantit que team_name_normalized en DB est TOUJOURS en
+# minuscules purs, ce qui permet la jointure fiable avec fifa_rankings
+# via load_fifa_ranking.FIFA_TO_NORM.
+#
+# Cas couverts :
+#   1. Deux APIs utilisent des noms différents pour la même équipe
+#      → on unifie vers le nom normalisé FIFA
+#   2. L'API retourne un nom plus long / abbrévié que le nom FIFA
+#      → on mappe vers le normalize(nom_fifa)
 # ------------------------------------------------------------------
-# Format : {nom_normalisé_api_football: nom_normalisé_football_data}
-# Permet de réconcilier les variantes de noms entre les deux APIs.
-
 NAME_ALIASES = {
-    # API-Football         → football-data.org
-    "korea republic":       "south korea",
-    "republic of ireland":  "ireland",
-    "china pr":             "china",
-    "usa":                  "united states",
-    "ir iran":              "iran",
-    "cape verde islands":   "cape verde",
-    "dpr korea":            "north korea",
-    "trinidad tobago":      "trinidad and tobago",
-    "bosnia":               "bosnia and herzegovina",
-    "czechia":              "czech republic",
+    # ── Unification noms API → noms FIFA normalisés ────────────────
+    # FIFA="Bosnia and Herzegovina" / API peut donner "Bosnia-Herzegovina"
+    # normalize("Bosnia-Herzegovina") = "bosnia herzegovina"
+    "bosnia herzegovina":              "bosnia and herzegovina",
+    "bosnia and herzegovina":          "bosnia and herzegovina",
+
+    # FIFA="Brunei Darussalam" / API donne parfois juste "Brunei"
+    "brunei":                          "brunei darussalam",
+    "brunei darussalam":               "brunei darussalam",
+
+    # FIFA="North Macedonia" / API donne parfois "FYR Macedonia" (ancien nom)
+    "fyr macedonia":                   "north macedonia",
+    "north macedonia":                 "north macedonia",
+
+    # FIFA="Republic of Ireland" / API donne "Rep. Of Ireland"
+    # normalize("Rep. Of Ireland") = "rep of ireland"
+    "rep of ireland":                  "republic of ireland",
+    "republic of ireland":             "republic of ireland",
+
+    # FIFA="Sao Tome e Principe" / API donne "Sao Tome and Principe"
+    "sao tome and principe":           "sao tome e principe",
+    "sao tome e principe":             "sao tome e principe",
+
+    # FIFA="St Vincent and the Grenadines" / API donne "St. Vincent / Grenadines"
+    # normalize("St. Vincent / Grenadines") = "st vincent grenadines"
+    "st vincent grenadines":           "st vincent and the grenadines",
+    "st vincent and the grenadines":   "st vincent and the grenadines",
+
+    # FIFA="Syria" / API donne "Syrian Arab Republic"
+    "syrian arab republic":            "syria",
+
+    # ── Noms FIFA avec "PR", "DR", code pays → noms DB simplifiés ──
+    # L'API retourne "Korea Republic" mais la DB stocke "South Korea"
+    # normalize("Korea Republic") = "korea republic" → cible = "south korea"
+    "korea republic":                  "south korea",
+    "korea dpr":                       "north korea",
+    "ir iran":                         "iran",
+    "china pr":                        "china",
+    "usa":                             "united states",
+
+    # normalize("Côte d'Ivoire") = "cote d ivoire" → cible = "ivory coast"
+    "cote d ivoire":                   "ivory coast",
+
+    # normalize("Kyrgyz Republic") = "kyrgyz republic" → cible = "kyrgyzstan"
+    "kyrgyz republic":                 "kyrgyzstan",
+
+    # normalize("Cabo Verde") = "cabo verde" → cible = "cape verde"
+    "cabo verde":                      "cape verde",
+
+    # normalize("St. Kitts and Nevis") = "st kitts and nevis" → cible = "saint kitts and nevis"
+    "st kitts and nevis":              "saint kitts and nevis",
+    "st lucia":                        "saint lucia",
+
+    # FIFA="Türkiye" → normalize → "turkiye" (pas d'alias nécessaire,
+    # mais on le garde pour la lisibilité)
+    "turkiye":                         "turkiye",
 }
 
 
 def canonical_name(name: str) -> str:
-    """Retourne le nom canonique après normalisation et résolution des alias."""
+    """
+    Retourne la clé de déduplication canonique d'un nom d'équipe.
+    Résultat : toujours une chaîne en minuscules sans accents (norm pure).
+    C'est cette valeur qui est stockée dans teams.team_name_normalized
+    et utilisée comme clé de jointure avec fifa_rankings.
+    """
     norm = normalize_name(name)
     return NAME_ALIASES.get(norm, norm)
 
@@ -90,20 +176,9 @@ def canonical_name(name: str) -> str:
 def upsert_team(c, team_name: str, source: str, external_id: int,
                 country_code: str = None, is_wc2026: int = 0) -> int | None:
     """
-    Insère ou retrouve une équipe dans la table teams par son nom canonique.
-    Met à jour team_id_map avec la correspondance source → ID interne.
-
-    Retourne l'ID interne (teams.team_id) ou None si l'équipe est filtrée.
-
-    Args:
-        c            : curseur SQLite actif
-        team_name    : nom brut de l'équipe tel que renvoyé par l'API
-        source       : 'football_data' | 'api_football'
-        external_id  : ID de l'équipe dans la source externe
-        country_code : code à 3 lettres (optionnel)
-        is_wc2026    : 1 si qualifiée pour la CdM 2026
+    Insère ou retrouve une équipe dans teams par son nom canonique.
+    Retourne l'ID interne ou None si l'équipe est filtrée.
     """
-    # Filtre équipes non seniors / non nationales
     if not is_national_senior(team_name):
         return None
 
@@ -118,25 +193,22 @@ def upsert_team(c, team_name: str, source: str, external_id: int,
     if row:
         return row[0]
 
-    # Chercher par nom canonique dans teams
+    # Chercher par nom canonique
     c.execute("""
-        SELECT team_id FROM teams
-        WHERE team_name_normalized = ?
+        SELECT team_id FROM teams WHERE team_name_normalized = ?
     """, (canon,))
     row = c.fetchone()
 
     if row:
-        # Équipe déjà connue sous un autre ID externe → on ajoute le mapping
         internal_id = row[0]
     else:
-        # Nouvelle équipe → insertion
         c.execute("""
             INSERT INTO teams (team_name, team_name_normalized, country_code, is_wc2026)
             VALUES (?, ?, ?, ?)
         """, (team_name, canon, country_code, is_wc2026))
         internal_id = c.lastrowid
 
-    # Mettre à jour fd_id ou apif_id selon la source
+    # Mettre à jour fd_id ou apif_id
     if source == "football_data":
         c.execute("UPDATE teams SET fd_id = ? WHERE team_id = ?",
                   (external_id, internal_id))
@@ -144,13 +216,11 @@ def upsert_team(c, team_name: str, source: str, external_id: int,
         c.execute("UPDATE teams SET apif_id = ? WHERE team_id = ?",
                   (external_id, internal_id))
 
-    # Enregistrer le mapping externe → interne
     c.execute("""
         INSERT OR IGNORE INTO team_id_map (source, external_id, team_id)
         VALUES (?, ?, ?)
     """, (source, external_id, internal_id))
 
-    # Mettre à jour is_wc2026 si nécessaire
     if is_wc2026:
         c.execute("UPDATE teams SET is_wc2026 = 1 WHERE team_id = ?",
                   (internal_id,))
@@ -159,10 +229,6 @@ def upsert_team(c, team_name: str, source: str, external_id: int,
 
 
 def resolve_team_id(c, source: str, external_id: int) -> int | None:
-    """
-    Résout un ID externe vers l'ID interne.
-    Retourne None si le mapping n'existe pas.
-    """
     c.execute("""
         SELECT team_id FROM team_id_map
         WHERE source = ? AND external_id = ?
