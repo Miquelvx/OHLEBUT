@@ -37,7 +37,7 @@ EXCLUDED_CLUBS = {
     "Atlas", "Vancouver Whitecaps", "CD Motagua", "CD Olimpia",
     "CF Pachuca", "LD Alajuelense", "Orlando City SC", "Tauro FC",
     "Real Espana", "Alianza", "Austin", "Violette AC",
-    "Alanyaspor", "Hull City", "Ghana B",
+    "Alanyaspor", "Hull City", "Ghana B","FC Urartu"
 }
 
 # ------------------------------------------------------------------

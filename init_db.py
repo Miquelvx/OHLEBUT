@@ -25,28 +25,24 @@ def init_db():
 
     # ------------------------------------------------------------------
     # Table : teams
-    # Référentiel de toutes les équipes nationales rencontrées.
-    # On stocke bien TOUTES les équipes (pas seulement les 48 qualifiées)
-    # pour éviter les matchs contre des équipes "inconnues" du modèle.
     # ------------------------------------------------------------------
     c.execute("""
         CREATE TABLE IF NOT EXISTS teams (
-            team_id             INTEGER PRIMARY KEY AUTOINCREMENT,  -- ID interne projet
-            team_name           TEXT    NOT NULL UNIQUE,            -- clé de déduplication
-            team_name_normalized TEXT,                              -- nom en minuscules sans accents
-            country_code        TEXT,                               -- code à 3 lettres (ex : FRA)
-            confederation       TEXT,                               -- UEFA, CONMEBOL, CAF, AFC, CONCACAF, OFC
-            fifa_ranking        INTEGER,                            -- classement FIFA
-            is_wc2026           INTEGER DEFAULT 0,                  -- 1 = qualifié pour la CdM 2026
-            fd_id               INTEGER,                            -- ID football-data.org
-            apif_id             INTEGER                             -- ID API-Football
+            team_id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            team_name           TEXT    NOT NULL UNIQUE,
+            team_name_normalized TEXT,
+            country_code        TEXT,
+            confederation       TEXT,
+            fifa_ranking        INTEGER,
+            is_wc2026           INTEGER DEFAULT 0,
+            fd_id               INTEGER,
+            apif_id             INTEGER
         )
     """)
 
-    # Table de correspondance externe → interne
     c.execute("""
         CREATE TABLE IF NOT EXISTS team_id_map (
-            source      TEXT    NOT NULL,   -- 'football_data' | 'api_football'
+            source      TEXT    NOT NULL,
             external_id INTEGER NOT NULL,
             team_id     INTEGER NOT NULL REFERENCES teams(team_id),
             PRIMARY KEY (source, external_id)
@@ -55,65 +51,56 @@ def init_db():
 
     # ------------------------------------------------------------------
     # Table : matches  (training set)
-    # Matchs TERMINÉS entre la CdM 2022 et la CdM 2026.
-    # Les deux équipes sont toujours connues (home_team_id NOT NULL).
-    # Usage : entraînement et validation du modèle ML.
     # ------------------------------------------------------------------
     c.execute("""
         CREATE TABLE IF NOT EXISTS matches (
-            match_id        INTEGER PRIMARY KEY,   -- ID natif API-Football
-            source          TEXT    NOT NULL,      -- 'api_football'
-            competition     TEXT    NOT NULL,      -- nom de la compétition
-            competition_id  INTEGER,               -- ID dans API-Football
-            season          TEXT,                  -- ex : '2022', '2023'
-            stage           TEXT,                  -- 'Group Stage', 'Final', 'Friendly'...
-            match_date      TEXT    NOT NULL,      -- format ISO : YYYY-MM-DD
+            match_id        INTEGER PRIMARY KEY,
+            source          TEXT    NOT NULL,
+            competition     TEXT    NOT NULL,
+            competition_id  INTEGER,
+            season          TEXT,
+            stage           TEXT,
+            match_date      TEXT    NOT NULL,
             home_team_id    INTEGER NOT NULL REFERENCES teams(team_id),
             away_team_id    INTEGER NOT NULL REFERENCES teams(team_id),
-            home_goals      INTEGER NOT NULL,      -- score final (matchs terminés uniquement)
+            home_goals      INTEGER NOT NULL,
             away_goals      INTEGER NOT NULL,
-            goal_diff       INTEGER NOT NULL,      -- home_goals - away_goals
-            result          TEXT    NOT NULL,      -- 'H' | 'D' | 'A'
-            neutral_venue   INTEGER DEFAULT 0,     -- 1 = terrain neutre
-            status          TEXT,                  -- 'FT', 'AET', 'PEN'
-            penalty_home    INTEGER,               -- score tirs au but domicile (NULL si pas de PEN)
-            penalty_away    INTEGER                -- score tirs au but extérieur (NULL si pas de PEN)
+            goal_diff       INTEGER NOT NULL,
+            result          TEXT    NOT NULL,
+            neutral_venue   INTEGER DEFAULT 0,
+            status          TEXT,
+            penalty_home    INTEGER,
+            penalty_away    INTEGER
         )
     """)
 
     # ------------------------------------------------------------------
     # Table : wc2026_fixtures  (données de prédiction)
-    # Tous les matchs de la CdM 2026, phases de groupe ET phases finales.
-    # - home/away_team_id peuvent être NULL pour les phases finales
-    #   (ex : "Winner Group A" avant que le groupe soit joué)
-    # - Les colonnes pred_* sont remplies par le modèle ML
-    # - Les colonnes actual_* sont remplies au fur et à mesure du tournoi
     # ------------------------------------------------------------------
     c.execute("""
         CREATE TABLE IF NOT EXISTS wc2026_fixtures (
-            fixture_id          INTEGER PRIMARY KEY,   -- ID football-data.org
-            group_name          TEXT,                  -- 'A'...'L' ou NULL (phases finales)
-            stage               TEXT    NOT NULL,      -- 'GROUP_STAGE', 'ROUND_OF_32'...
-            match_date          TEXT,                  -- YYYY-MM-DD
+            fixture_id          INTEGER PRIMARY KEY,
+            group_name          TEXT,
+            stage               TEXT    NOT NULL,
+            match_date          TEXT,
             home_team_id        INTEGER REFERENCES teams(team_id),
             away_team_id        INTEGER REFERENCES teams(team_id),
-            home_team_label     TEXT,                  -- nom affiché (ex: "Winner Group A")
+            home_team_label     TEXT,
             away_team_label     TEXT,
-            pred_proba_home     REAL,                  -- probabilité victoire domicile
-            pred_proba_draw     REAL,                  -- probabilité match nul
-            pred_proba_away     REAL,                  -- probabilité victoire extérieur
+            pred_proba_home     REAL,
+            pred_proba_draw     REAL,
+            pred_proba_away     REAL,
+            pred_home_goals     REAL,
+            pred_away_goals     REAL,
             pred_winner_id      INTEGER REFERENCES teams(team_id),
-            actual_home_goals   INTEGER,               -- rempli après le match
+            actual_home_goals   INTEGER,
             actual_away_goals   INTEGER,
-            actual_result       TEXT                   -- 'H' | 'D' | 'A' après le match
+            actual_result       TEXT
         )
     """)
 
     # ------------------------------------------------------------------
     # Table : collection_log
-    # Checkpoint par (source, competition_id, season).
-    # Permet de reprendre la collecte API-Football sans tout relancer
-    # si on atteint la limite de 100 req/jour.
     # ------------------------------------------------------------------
     c.execute("""
         CREATE TABLE IF NOT EXISTS collection_log (
@@ -122,9 +109,9 @@ def init_db():
             competition_id   INTEGER NOT NULL,
             competition_name TEXT,
             season           TEXT    NOT NULL,
-            status           TEXT    NOT NULL,     -- 'pending' | 'done' | 'error'
+            status           TEXT    NOT NULL,
             matches_collected INTEGER DEFAULT 0,
-            last_updated     TEXT,                 -- timestamp ISO
+            last_updated     TEXT,
             UNIQUE(source, competition_id, season)
         )
     """)
@@ -136,13 +123,6 @@ def init_db():
 
 
 def seed_collection_log():
-    """
-    Pré-remplit collection_log avec toutes les compétitions à collecter
-    via API-Football (training set uniquement).
-    La CdM 2026 est gérée séparément par collect_football_data.py.
-    """
-
-    # Format : (source, competition_id, competition_name, season)
     COMPETITIONS = [
         # CdM 2022
         ("api_football",   1,  "FIFA World Cup 2022",          "2022"),
@@ -170,11 +150,11 @@ def seed_collection_log():
         ("api_football",   6,  "Africa Cup of Nations",        "2025"),
         ("api_football",   7,  "AFC Asian Cup",                "2023"),
 
-        # CONCACAF Gold Cup (ID corrigé : 22, pas 16)
+        # CONCACAF Gold Cup
         ("api_football",  22,  "CONCACAF Gold Cup",            "2023"),
         ("api_football",  22,  "CONCACAF Gold Cup",            "2025"),
 
-        # CONCACAF Nations League (3 éditions sur la période)
+        # CONCACAF Nations League
         ("api_football", 536,  "CONCACAF Nations League",      "2022"),
         ("api_football", 536,  "CONCACAF Nations League",      "2023"),
         ("api_football", 536,  "CONCACAF Nations League",      "2024"),
@@ -183,6 +163,7 @@ def seed_collection_log():
         ("api_football",  10,  "International Friendlies",     "2023"),
         ("api_football",  10,  "International Friendlies",     "2024"),
         ("api_football",  10,  "International Friendlies",     "2025"),
+        ("api_football",  10,  "International Friendlies",     "2026"),
     ]
 
     conn = get_connection()
