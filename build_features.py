@@ -1,18 +1,20 @@
 """
-Feature Engineering — WC2026 Predictor (v2)
+Feature Engineering — WC2026 Predictor (v3)
 
-Améliorations par rapport à v1 :
-  1. Forme pondérée par la qualité de l'adversaire
-     pts_pondérés = pts × (1 + (100 - rank_adversaire) / 200)
-     → Victoire vs top 10 vaut plus qu'une victoire vs rang 100
+Améliorations par rapport à v2 :
+  1. Forme pondérée par la qualité de l'adversaire + confédération
+     pts_pondérés = pts × conf_factor × (1 + (100 - rank_adversaire) / 200)
+     → Victoire Iran vs Irak (AFC) vaut moins que victoire France vs Espagne (UEFA)
 
-  2. Décroissance temporelle exponentielle
-     poids = exp(-λ × nb_jours)  avec λ = 0.001
-     → Les matchs récents comptent davantage
+  2. Décroissance temporelle exponentielle (inchangé)
 
-  3. Imputation H2H intelligente basée sur le ranking_gap
-     → Si pas d'historique H2H, on estime les proba depuis l'écart de niveau
-     → Plus réaliste que 33%/33%/33%
+  3. Imputation H2H intelligente (inchangé)
+
+  4. ranking_gap_adj : ranking FIFA + pénalité confédération
+     → Iran #21 AFC devient effectivement #41, réduisant les upsets artificiels
+
+  5. top20_ratio : ratio de matchs joués contre le top 20 FIFA
+     → Capture l'expérience des grandes équipes contre l'élite mondiale
 """
 
 import os
@@ -26,6 +28,30 @@ from init_db import get_connection
 
 # ── Paramètres ────────────────────────────────────────────────────
 LAMBDA_DECAY = 0.001   # Décroissance temporelle : demi-vie ≈ 693 jours
+
+# ── Force relative des confédérations ─────────────────────────────
+# Calibré sur les résultats inter-confédérations depuis 2018
+# UEFA=référence, les autres sont pénalisées proportionnellement
+CONF_STRENGTH = {
+    "UEFA":     1.00,
+    "CONMEBOL": 0.95,
+    "CAF":      0.75,
+    "AFC":      0.70,
+    "CONCACAF": 0.72,
+    "OFC":      0.55,
+}
+
+# Pénalité de ranking ajouté au ranking FIFA brut
+# Iran #21 AFC → ranking ajusté #41 (21 + 20)
+# France #3 UEFA → ranking ajusté #3 (3 + 0)
+CONF_RANKING_PENALTY = {
+    "UEFA":     0,
+    "CONMEBOL": 5,
+    "CAF":      15,
+    "AFC":      20,
+    "CONCACAF": 15,
+    "OFC":      30,
+}
 
 COMPETITION_WEIGHTS = {
     "UEFA Euro":                        0.8,
@@ -81,9 +107,11 @@ def days_between(date1_str, date2_str):
 
 # ── Amélioration 1+2 : Forme pondérée par adversaire + décroissance ──
 
-def compute_form_v2(team_id, before_date, matches_df, ranking_map, window=5):
+def compute_form_v2(team_id, before_date, matches_df, ranking_map,
+                    conf_map, window=5):
     """
     Calcule la forme pondérée :
+    - Pondération par confédération de l'adversaire (NOUVEAU)
     - Pondération par qualité de l'adversaire (ranking FIFA)
     - Pondération par récence (décroissance exponentielle)
 
@@ -104,11 +132,9 @@ def compute_form_v2(team_id, before_date, matches_df, ranking_map, window=5):
     weights     = []
 
     for _, m in team_matches.iterrows():
-        # Identifier l'adversaire
         is_home = (m["home_team_id"] == team_id)
         opp_id  = m["away_team_id"] if is_home else m["home_team_id"]
 
-        # Points bruts
         if is_home:
             scored   = m["home_goals"]; conceded = m["away_goals"]
             result   = m["result_90"]
@@ -118,14 +144,19 @@ def compute_form_v2(team_id, before_date, matches_df, ranking_map, window=5):
             result   = m["result_90"]
             pts_raw  = 3 if result=="A" else (1 if result=="D" else 0)
 
-        # Pondération par qualité de l'adversaire
-        opp_rank = ranking_map.get(opp_id, 100)
-        # Plus l'adversaire est fort (petit rank), plus la victoire vaut
-        opp_weight = 1.0 + (100 - min(opp_rank, 100)) / 200.0
-        # [1.0 si rang 100, 1.5 si rang 0]
+        # Pondération par confédération de l'adversaire
+        opp_conf    = conf_map.get(int(opp_id), "")
+        conf_factor = CONF_STRENGTH.get(opp_conf, 0.75)
+
+        # Pondération par ranking de l'adversaire
+        opp_rank   = ranking_map.get(opp_id, 100)
+        rank_bonus  = 1.0 + (100 - min(opp_rank, 100)) / 200.0
+
+        # Combinaison : conf × rank_bonus
+        opp_weight   = conf_factor * rank_bonus
         pts_weighted = pts_raw * opp_weight
 
-        # Pondération temporelle (décroissance exponentielle)
+        # Décroissance temporelle
         days = days_between(m["match_date"], before_date)
         time_weight = np.exp(-LAMBDA_DECAY * days)
 
@@ -245,6 +276,11 @@ def create_features_table(conn):
             home_fifa_ranking    INTEGER,
             away_fifa_ranking    INTEGER,
             ranking_gap          INTEGER,
+            ranking_gap_adj      INTEGER,
+            home_rank_adj        INTEGER,
+            away_rank_adj        INTEGER,
+            home_top20_ratio     REAL,
+            away_top20_ratio     REAL,
             home_form5_pts       REAL,
             home_form5_scored    REAL,
             home_form5_conceded  REAL,
@@ -289,6 +325,13 @@ def build_features():
         ORDER BY match_date ASC
     """, conn)
 
+    # ── Carte des confédérations par team_id ──────────────────────
+    conf_df = pd.read_sql_query(
+        "SELECT team_id, confederation FROM teams WHERE confederation IS NOT NULL",
+        conn)
+    conf_map = dict(zip(conf_df["team_id"].astype(int),
+                        conf_df["confederation"].str.strip()))
+
     # Rankings FIFA : depuis match_features (déjà résolus par load_fifa_ranking.py)
     # Fallback : table teams si match_features vide
     ranking_map = {}
@@ -320,6 +363,37 @@ def build_features():
             ranking_map[tid] = int(r["fifa_ranking"])
 
     print(f"📊 {len(matches_df)} matchs à traiter...")
+    print(f"   Confédérations chargées : {len(conf_map)} équipes")
+
+    def get_adj_rank(team_id):
+        """Ranking FIFA + pénalité confédération."""
+        rank = ranking_map.get(team_id, 100)
+        conf = conf_map.get(team_id, "")
+        penalty = CONF_RANKING_PENALTY.get(conf, 15)
+        return rank + penalty
+
+    def compute_top20_ratio(team_id, before_date, window=20):
+        """
+        Ratio de matchs joués contre le top 20 FIFA (ajusté)
+        sur les `window` derniers matchs avant before_date.
+        Capture l'expérience contre l'élite mondiale.
+        """
+        recent = matches_df[
+            ((matches_df["home_team_id"] == team_id) |
+             (matches_df["away_team_id"] == team_id)) &
+            (matches_df["match_date"] < before_date)
+        ].sort_values("match_date", ascending=False).head(window)
+
+        if len(recent) == 0:
+            return 0.0
+
+        top20_count = 0
+        for _, m in recent.iterrows():
+            opp_id = m["away_team_id"] if m["home_team_id"] == team_id \
+                     else m["home_team_id"]
+            if get_adj_rank(opp_id) <= 20:
+                top20_count += 1
+        return round(top20_count / len(recent), 4)
 
     rows = []
     for idx, m in matches_df.iterrows():
@@ -337,14 +411,27 @@ def build_features():
         away_rank = ranking_map.get(away_id)
         rank_gap  = (away_rank - home_rank) if (home_rank and away_rank) else None
 
-        # Forme v2 (pondérée + décroissance)
-        home_f5  = compute_form_v2(home_id, match_date, matches_df, ranking_map, 5)
-        away_f5  = compute_form_v2(away_id, match_date, matches_df, ranking_map, 5)
-        home_f10 = compute_form_v2(home_id, match_date, matches_df, ranking_map, 10)
-        away_f10 = compute_form_v2(away_id, match_date, matches_df, ranking_map, 10)
+        # Ranking ajusté : FIFA + pénalité confédération
+        home_rank_adj = get_adj_rank(home_id)
+        away_rank_adj = get_adj_rank(away_id)
+        rank_gap_adj  = away_rank_adj - home_rank_adj
+
+        # Forme v2 (pondérée + décroissance + confédération adversaire)
+        home_f5  = compute_form_v2(home_id, match_date, matches_df, ranking_map,
+                                   conf_map, 5)
+        away_f5  = compute_form_v2(away_id, match_date, matches_df, ranking_map,
+                                   conf_map, 5)
+        home_f10 = compute_form_v2(home_id, match_date, matches_df, ranking_map,
+                                   conf_map, 10)
+        away_f10 = compute_form_v2(away_id, match_date, matches_df, ranking_map,
+                                   conf_map, 10)
 
         # H2H v2 (imputation intelligente)
         h2h = compute_h2h_v2(home_id, away_id, match_date, matches_df, ranking_map, 5)
+
+        # top20_ratio : expérience contre l'élite
+        home_top20 = compute_top20_ratio(home_id, match_date)
+        away_top20 = compute_top20_ratio(away_id, match_date)
 
         rows.append({
             "match_id":             m["match_id"],
@@ -358,6 +445,11 @@ def build_features():
             "home_fifa_ranking":    home_rank,
             "away_fifa_ranking":    away_rank,
             "ranking_gap":          rank_gap,
+            "ranking_gap_adj":      rank_gap_adj,       # NOUVEAU
+            "home_rank_adj":        home_rank_adj,      # NOUVEAU
+            "away_rank_adj":        away_rank_adj,      # NOUVEAU
+            "home_top20_ratio":     home_top20,         # NOUVEAU
+            "away_top20_ratio":     away_top20,         # NOUVEAU
             "home_form5_pts":       home_f5["points_avg"],
             "home_form5_scored":    home_f5["goals_scored_avg"],
             "home_form5_conceded":  home_f5["goals_conceded_avg"],

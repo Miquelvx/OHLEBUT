@@ -152,9 +152,19 @@ NAME_ALIASES = {
     "st kitts and nevis":              "saint kitts and nevis",
     "st lucia":                        "saint lucia",
 
-    # FIFA="Türkiye" → normalize → "turkiye" (pas d'alias nécessaire,
-    # mais on le garde pour la lisibilité)
-    "turkiye":                         "turkiye",
+    # ── Divergences FD ↔ API-Football ─────────────────────────────
+    # FD="Czech Republic" / APIF="Czechia"
+    "czechia":                         "czech republic",
+
+    # FD="Bosnia and Herzegovina" / APIF="Bosnia"
+    "bosnia":                          "bosnia and herzegovina",
+
+    # FD="Türkiye" (norm="turkiye") / APIF="Turkey"
+    "turkey":                          "turkiye",
+
+    # FD="Côte d'Ivoire" (norm="cote d ivoire") / APIF="Ivory Coast"
+    # ⚠️ remplace l'ancien alias qui pointait sur lui-même
+    "ivory coast":                     "cote d ivoire",
 }
 
 

@@ -61,6 +61,7 @@ FIFA_TO_NORM = {
     "USA":                             "united states",
     "China PR":                        "china",
     "Côte d'Ivoire":                  "ivory coast",    # accent sur Ô obligatoire
+    "Côte d'Ivoire":                  "cote d ivoire", 
     "Congo DR":                        "congo dr",
     "Syria":                           "syria",
     "Cabo Verde":                      "cape verde",
@@ -343,6 +344,221 @@ def update_match_features():
 
 
 # ------------------------------------------------------------------
+# 5. Mettre à jour teams.fifa_ranking (dernier classement connu)
+# ------------------------------------------------------------------
+
+def update_teams_ranking():
+    """
+    Injecte le dernier classement FIFA connu dans teams.fifa_ranking
+    et teams.confederation pour chaque équipe.
+
+    C'est cette colonne que les scripts de prédiction utilisent pour
+    construire les features des matchs CdM 2026 (ranking actuel).
+    Sans ce fix, teams.fifa_ranking reste NULL et le modèle reçoit
+    ranking_gap = NULL pour tous les matchs à prédire.
+
+    Utilise la même logique de jointure que update_match_features()
+    (FIFA_TO_NORM + _normalize() en fallback).
+    """
+    conn = get_connection()
+
+    rankings_df = pd.read_sql_query("""
+        SELECT team_name_fifa, rank, confederation
+        FROM fifa_rankings
+        ORDER BY rank_date DESC
+    """, conn)
+
+    if len(rankings_df) == 0:
+        print("  ❌ Aucun classement en DB — lance d'abord scrape_all_rankings()")
+        conn.close()
+        return
+
+    # Garder uniquement le classement le plus récent par équipe
+    latest = rankings_df.groupby("team_name_fifa").first().reset_index()
+    latest["team_norm"] = latest["team_name_fifa"].apply(
+        lambda n: FIFA_TO_NORM.get(n, _normalize(n))
+    )
+
+    teams_df = pd.read_sql_query(
+        "SELECT team_id, team_name_normalized FROM teams", conn
+    )
+    merged = teams_df.merge(
+        latest[["team_norm", "rank", "confederation"]],
+        left_on="team_name_normalized",
+        right_on="team_norm",
+        how="left",
+    )
+
+    c         = conn.cursor()
+    updated   = 0
+    not_found = []
+
+    for _, row in merged.iterrows():
+        if pd.notna(row["rank"]):
+            c.execute("""
+                UPDATE teams
+                SET fifa_ranking  = ?,
+                    confederation = ?
+                WHERE team_id = ?
+            """, (int(row["rank"]), row["confederation"], int(row["team_id"])))
+            updated += c.rowcount
+        else:
+            not_found.append(row["team_name_normalized"])
+
+    conn.commit()
+
+    print(f"\n✅ teams.fifa_ranking mis à jour : {updated} équipes")
+
+    if not_found:
+        wc_nf = [n for n in not_found
+                 if _is_wc2026(c, n)]
+        if wc_nf:
+            print(f"\n⚠️  {len(wc_nf)} équipes CdM 2026 sans ranking FIFA :")
+            for name in sorted(wc_nf):
+                print(f"   - {name}")
+            print("\n   → Ajouter les entrées manquantes dans FIFA_TO_NORM")
+
+    # Vérification rapide sur les équipes CdM 2026
+    c.execute("""
+        SELECT team_name, fifa_ranking
+        FROM teams
+        WHERE is_wc2026 = 1 AND fifa_ranking IS NOT NULL
+        ORDER BY fifa_ranking
+        LIMIT 10
+    """)
+    rows = c.fetchall()
+    if rows:
+        print("\n📊 Top 10 équipes CdM 2026 (vérification) :")
+        for name, rank in rows:
+            print(f"   #{rank:<4} {name}")
+
+    conn.close()
+
+
+def _is_wc2026(c, team_norm: str) -> bool:
+    c.execute("""
+        SELECT 1 FROM teams
+        WHERE team_name_normalized = ? AND is_wc2026 = 1
+    """, (team_norm,))
+    return c.fetchone() is not None
+
+
+# ------------------------------------------------------------------
+# 6. Mettre à jour wc2026_fixtures avec le dernier ranking FIFA connu
+# ------------------------------------------------------------------
+
+def update_wc2026_rankings():
+    """
+    Injecte le ranking FIFA le plus récent dans wc2026_fixtures pour
+    chaque match (colonnes home_fifa_ranking et away_fifa_ranking).
+
+    Pourquoi c'est nécessaire :
+      - Les scripts de prédiction récupèrent le ranking via match_features,
+        qui utilise la dernière apparition de l'équipe comme home/away.
+      - Si une équipe n'a pas joué depuis la dernière publication FIFA,
+        son ranking dans match_features peut être obsolète.
+      - wc2026_fixtures stocke le ranking au moment de la prédiction,
+        garantissant que tous les scripts utilisent la même valeur à jour.
+
+    Stratégie de jointure identique à update_teams_ranking() :
+      teams.team_name_normalized → FIFA_TO_NORM[fifa_rankings.team_name_fifa]
+    """
+    conn = get_connection()
+
+    # Dernière publication FIFA par équipe
+    rankings_df = pd.read_sql_query("""
+        SELECT team_name_fifa, rank
+        FROM fifa_rankings
+        ORDER BY rank_date DESC
+    """, conn)
+
+    if len(rankings_df) == 0:
+        print("  ❌ Aucun classement en DB — lance d'abord scrape_all_rankings()")
+        conn.close()
+        return
+
+    # Garder le ranking le plus récent par équipe
+    latest = rankings_df.groupby("team_name_fifa").first().reset_index()
+    latest["team_norm"] = latest["team_name_fifa"].apply(
+        lambda n: FIFA_TO_NORM.get(n, _normalize(n))
+    )
+    # Dict norm → rank pour lookup rapide
+    norm_to_rank = dict(zip(latest["team_norm"], latest["rank"].astype(int)))
+
+    # Récupérer les fixtures CdM avec les team_id et noms normalisés
+    fixtures_df = pd.read_sql_query("""
+        SELECT f.fixture_id,
+               th.team_name_normalized AS home_norm,
+               ta.team_name_normalized AS away_norm
+        FROM wc2026_fixtures f
+        JOIN teams th ON th.team_id = f.home_team_id
+        JOIN teams ta ON ta.team_id = f.away_team_id
+        WHERE f.home_team_id IS NOT NULL
+          AND f.away_team_id IS NOT NULL
+    """, conn)
+
+    if len(fixtures_df) == 0:
+        print("  ⚠️  Aucune fixture CdM 2026 avec équipes assignées")
+        conn.close()
+        return
+
+    # Ajouter les colonnes si elles n'existent pas
+    c = conn.cursor()
+    for col in ["home_fifa_ranking", "away_fifa_ranking"]:
+        try:
+            c.execute(f"ALTER TABLE wc2026_fixtures ADD COLUMN {col} INTEGER")
+        except Exception:
+            pass  # colonne déjà existante
+
+    updated    = 0
+    not_found  = set()
+
+    for _, row in fixtures_df.iterrows():
+        home_rank = norm_to_rank.get(row["home_norm"])
+        away_rank = norm_to_rank.get(row["away_norm"])
+
+        if home_rank is None: not_found.add(row["home_norm"])
+        if away_rank is None: not_found.add(row["away_norm"])
+
+        if home_rank is not None or away_rank is not None:
+            c.execute("""
+                UPDATE wc2026_fixtures
+                SET home_fifa_ranking = ?,
+                    away_fifa_ranking = ?
+                WHERE fixture_id = ?
+            """, (home_rank, away_rank, int(row["fixture_id"])))
+            updated += c.rowcount
+
+    conn.commit()
+
+    print(f"\n✅ wc2026_fixtures mis à jour : {updated} fixtures")
+    print(f"   Ranking home/away injecté depuis la dernière publication FIFA")
+
+    if not_found:
+        print(f"\n⚠️  {len(not_found)} équipes sans ranking FIFA dans wc2026_fixtures :")
+        for name in sorted(not_found):
+            print(f"   - {name}")
+        print("   → Ajouter dans FIFA_TO_NORM (load_fifa_ranking.py)")
+
+    # Vérification : top 5 matchs avec rankings
+    c.execute("""
+        SELECT home_team_label, home_fifa_ranking,
+               away_team_label, away_fifa_ranking
+        FROM wc2026_fixtures
+        WHERE home_fifa_ranking IS NOT NULL
+        ORDER BY home_fifa_ranking
+        LIMIT 5
+    """)
+    rows = c.fetchall()
+    if rows:
+        print("\n📊 Vérification (5 meilleures équipes domicile) :")
+        for home, hr, away, ar in rows:
+            print(f"   #{hr:<4} {home:<25} vs #{ar:<4} {away}")
+
+    conn.close()
+
+
+# ------------------------------------------------------------------
 # Point d'entrée
 # ------------------------------------------------------------------
 
@@ -360,5 +576,7 @@ if __name__ == "__main__":
 
     scrape_all_rankings(dates)
     update_match_features()
+    update_teams_ranking()
+    update_wc2026_rankings()      # NOUVEAU
 
     print("\n🎉 Classements FIFA chargés et features mises à jour.")
