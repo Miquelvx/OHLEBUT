@@ -269,9 +269,6 @@
   <div class="section-title">Importance des Features</div>
   <div class="section-sub">Contribution de chaque variable aux prédictions du classificateur XGBoost</div>
   <div id="fiChart" style="max-width:700px"></div>
-  <p style="font-size:.78rem;color:#A8A29E;margin-top:.75rem;line-height:1.6">
-    Les features <code class="code-inline">ranking_gap_adj</code>, <code class="code-inline">home/away_rank_adj</code> et <code class="code-inline">top20_ratio</code> affichent une importance nulle car elles sont fortement corrélées au <code class="code-inline">ranking_gap</code> et aux rankings bruts. XGBoost sélectionne la feature la plus discriminante au moment du split — les autres sont éclipsées même si elles apportent de l'information marginale.
-  </p>
 </div>
 
 <!-- ══════════════════════════════════
