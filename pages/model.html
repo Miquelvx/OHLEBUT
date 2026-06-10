@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Modèle — WC2026 Predictor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css_pages/css_model.css">
+
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="../index.html">OhLeBut ⚽</a>
+  <div class="nav-links">
+    <a href="../index.html">Accueil</a>
+    <a href="groups.html">Groupes</a>
+    <a href="bracket.html">Bracket</a>
+    <a href="model.html" class="active">Modèle</a>
+    <a href="data.html">Données</a>
+  </div>
+</nav>
+
+<div class="page-header">
+  <h1>Le <span>Modèle</span></h1>
+  <p>Pipeline complète · XGBoost · Monte Carlo</p>
+</div>
+
+<main class="main">
+
+<!-- ══════════════════════════════════
+     1. PIPELINE
+══════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">Pipeline</div>
+  <div class="section-sub">10 scripts à exécuter dans l'ordre. Clique sur une étape pour voir les détails.</div>
+
+  <div class="pipeline" id="pipeline">
+
+    <div class="pipeline-step" data-step="0" onclick="showStep(0)">
+      <div class="step-number" style="color:#6366F1">①</div>
+      <div class="step-name">Init DB</div>
+      <div class="step-file">init_db.py</div>
+      <div class="step-desc">Création de la base SQLite et des tables</div>
+    </div>
+    <div class="pipeline-arrow">→</div>
+
+    <div class="pipeline-step" data-step="1" onclick="showStep(1)">
+      <div class="step-number" style="color:var(--sky)">②</div>
+      <div class="step-name">Collecte data</div>
+      <div class="step-file">collect_*.py</div>
+      <div class="step-desc">Appels API · matchs CdM + matchs historiques</div>
+    </div>
+    <div class="pipeline-arrow">→</div>
+
+    <div class="pipeline-step" data-step="3" onclick="showStep(2)">
+      <div class="step-number" style="color:#14B8A6">③</div>
+      <div class="step-name">Nettoyage</div>
+      <div class="step-file">clean_database.py</div>
+      <div class="step-desc">Filtrage du dataset</div>
+    </div>
+    <div class="pipeline-arrow">→</div>
+
+    <div class="pipeline-step" data-step="4" onclick="showStep(3)">
+      <div class="step-number" style="color:var(--gold)">④</div>
+      <div class="step-name">Features</div>
+      <div class="step-file">build_features.py</div>
+      <div class="step-desc">Calcul des 29 features</div>
+    </div>
+    <div class="pipeline-arrow">→</div>
+
+    <div class="pipeline-step" data-step="4" onclick="showStep(4)">
+      <div class="step-number" style="color:var(--grass)">⑤</div>
+      <div class="step-name">Rankings FIFA</div>
+      <div class="step-file">load_fifa_ranking.py</div>
+      <div class="step-desc">Import des classements FIFA dans la DB</div>
+    </div>
+    <div class="pipeline-arrow">→</div>
+
+    <div class="pipeline-step" data-step="5" onclick="showStep(5)">
+      <div class="step-number" style="color:var(--sun)">⑥</div>
+      <div class="step-name">Entraînement</div>
+      <div class="step-file">train_model.py</div>
+      <div class="step-desc">XGBoost · walk-forward · calibration</div>
+    </div>
+    <div class="pipeline-arrow">→</div>
+
+    <div class="pipeline-step" data-step="6" onclick="showStep(6)">
+      <div class="step-number" style="color:#EC4899">⑦</div>
+      <div class="step-name">Prédictions</div>
+      <div class="step-file">predict_*.py</div>
+      <div class="step-desc">Monte Carlo : groupes · bracket</div>
+    </div>
+    <div class="pipeline-arrow">→</div>
+
+    <div class="pipeline-step" data-step="7" onclick="showStep(7)" style="border-style:dashed">
+      <div class="step-number" style="color:#A8A29E">⑧</div>
+      <div class="step-name">Export data</div>
+      <div class="step-file">export_data.py</div>
+      <div class="step-desc">Génère les fichiers JSON</div>
+    </div>
+
+  </div>
+
+  <div class="step-detail" id="stepDetail" style="display:none"></div>
+</div>
+
+<!-- ══════════════════════════════════
+     2. CHOIX DE DESIGN
+══════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">Choix de conception</div>
+  <div class="section-sub">Pourquoi ces algorithmes, ces features, cette approche de validation ?</div>
+
+  <div class="cards-grid">
+
+    <div class="design-card">
+      <div class="design-card-header">
+        <div class="design-icon" style="background:#FFF7ED">🌳</div>
+        <h4>XGBoost Gradient Boosting</h4>
+      </div>
+      <p>Le football est un sport à faibles scores où les différences entre équipes sont souvent marginales. XGBoost gère naturellement les interactions non-linéaires, les valeurs manquantes, et produit des prédictions robustes sur des datasets de taille modeste.</p>
+      <div class="why">→ Alternatives rejetées : réseaux de neurones (trop peu de données), régression logistique (trop rigide face aux interactions).</div>
+    </div>
+
+    <div class="design-card">
+      <div class="design-card-header">
+        <div class="design-icon" style="background:#F0FDF4">📐</div>
+        <h4>Calibration Isotonique</h4>
+      </div>
+      <p>XGBoost produit des probabilités brutes souvent mal calibrées (ex. donner 85% de chances à une équipe légèrement favorite). La calibration isotonique ajuste ces probabilités sur un hold-out temporel de 15% pour qu'elles correspondent à la réalité observée.</p>
+      <div class="why">→ Concrètement : les probabilités affichées reflètent fidèlement la fréquence réelle de victoire dans les données historiques.</div>
+    </div>
+
+    <div class="design-card">
+      <div class="design-card-header">
+        <div class="design-icon" style="background:#EFF6FF">⏩</div>
+        <h4>Walk-Forward Validation</h4>
+      </div>
+      <p>On entraîne sur le passé et on teste sur le futur, en avançant chronologiquement sur 6 fenêtres. Cette approche respecte la causalité temporelle et évite le data leakage (on ne peut pas utiliser des matchs futurs pour prédire le passé).</p>
+      <div class="why">→ Contrairement à une validation croisée classique qui mélangerait passé et futur.</div>
+    </div>
+
+    <div class="design-card">
+      <div class="design-card-header">
+        <div class="design-icon" style="background:#F5F3FF">🌍</div>
+        <h4>Pénalité Confédération</h4>
+      </div>
+      <p>Le classement FIFA seul est trompeur : l'Iran classé #21 joue majoritairement en AFC contre des équipes moins compétitives qu'un #21 UEFA. On ajoute une pénalité au ranking pour comparer les équipes à leur niveau réel de compétition.</p>
+      <div class="why">→ Résultat : moins d'upsets artificiels entre équipes de confédérations différentes.</div>
+    </div>
+
+    <div class="design-card">
+      <div class="design-card-header">
+        <div class="design-icon" style="background:#FFF0F6">⚖️</div>
+        <h4>Sample Weights</h4>
+      </div>
+      <p>Un match France-Brésil en finale de CdM et un match Botswana-Somalie en qualifications CAF ont le même poids par défaut. On pondère chaque match à l'entraînement selon la qualité des équipes et l'importance de la compétition, pour que le modèle apprenne davantage des confrontations qui comptent.</p>
+      <div class="why">→ Corrige la sur-représentation des qualifications intra-confédération (CAF = 256 matchs).</div>
+    </div>
+
+    <div class="design-card">
+      <div class="design-card-header">
+        <div class="design-icon" style="background:#F0FDFA">🎲</div>
+        <h4>Simulation Monte Carlo</h4>
+      </div>
+      <p>Pour propager l'incertitude à travers tout le tournoi, on simule 10 000 fois la compétition entière. Chaque match est tiré aléatoirement selon les probabilités du modèle. Les résultats (prob. de victoire en groupe, de titre) sont des fréquences sur ces 10 000 simulations.</p>
+      <div class="why">→ Capture les effets de bracket (équipes évitées ou affrontées selon leur côté du tableau).</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
+     3. FEATURES
+══════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">Features du Modèle</div>
+  <div class="section-sub">29 variables d'entrée calculées pour chaque match</div>
+
+  <div class="features-grid">
+
+    <div class="feature-group">
+      <div class="feature-group-header">🏆 Classement FIFA</div>
+      <div class="feature-item"><span class="feat-name">home/away_fifa_ranking</span><span class="feat-desc">Classement FIFA brut de chaque équipe</span></div>
+      <div class="feature-item"><span class="feat-name">ranking_gap</span><span class="feat-desc">Écart brut de classement (away - home)</span></div>
+      <div class="feature-item"><span class="feat-name">home/away_rank_adj</span><span class="feat-desc">Ranking individuel ajusté par confédération</span></div>
+      <div class="feature-item"><span class="feat-name">ranking_gap_adj</span><span class="feat-desc">Écart corrigé par les pénalités de confédération</span></div>
+    </div>
+
+    <div class="feature-group">
+      <div class="feature-group-header">📈 Forme Récente</div>
+      <div class="feature-item"><span class="feat-name">home/away_form5_pts</span><span class="feat-desc">Points pondérés sur les 5 derniers matchs</span></div>
+      <div class="feature-item"><span class="feat-name">home/away_form5_scored</span><span class="feat-desc">Buts marqués moyens pondérés (5 matchs)</span></div>
+      <div class="feature-item"><span class="feat-name">home/away_form5_conceded</span><span class="feat-desc">Buts encaissés moyens pondérés (5 matchs)</span></div>
+      <div class="feature-item"><span class="feat-name">home/away_form10_*</span><span class="feat-desc">Idem sur les 10 derniers matchs (forme long terme)</span></div>
+    </div>
+
+    <div class="feature-group">
+      <div class="feature-group-header">⚔️ Historique Head to Head</div>
+      <div class="feature-item"><span class="feat-name">h2h_home/away_wins</span><span class="feat-desc">% victoires domicile/extérieur entre les deux équipes</span></div>
+      <div class="feature-item"><span class="feat-name">h2h_draws</span><span class="feat-desc">% de matchs nuls entre les deux équipes</span></div>
+      <div class="feature-item"><span class="feat-name">h2h_home/away_goals_avg</span><span class="feat-desc">Buts marqués en moyenne dans les duels directs</span></div>
+      <div class="feature-item"><span class="feat-name">h2h_matches</span><span class="feat-desc">Nombre de confrontations directes disponibles</span></div>
+    </div>
+
+    <div class="feature-group">
+      <div class="feature-group-header">🌟 Expérience & Contexte</div>
+      <div class="feature-item"><span class="feat-name">home/away_top20_ratio</span><span class="feat-desc">Part des 20 derniers matchs contre le top 20 mondial</span></div>
+      <div class="feature-item"><span class="feat-name">neutral_venue</span><span class="feat-desc">Match sur terrain neutre (1) ou non (0)</span></div>
+      <div class="feature-item"><span class="feat-name">competition_weight</span><span class="feat-desc">Importance de la compétition (CdM=1.0, Euro=0.8, amicaux=0.3…)</span></div>
+      <div class="feature-item"><span class="feat-name">is_knockout</span><span class="feat-desc">Phase éliminatoire (1) vs phase de groupes (0)</span></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
+     4. VALIDATION
+══════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">Validation Walk-Forward</div>
+  <div class="section-sub">6 fenêtres temporelles · entraînement sur le passé, test sur le futur</div>
+
+  <div class="wf-timeline" id="wfTimeline">
+    <!-- généré en JS -->
+  </div>
+  <div class="wf-legend" style="margin-top:.75rem">
+    <div class="wf-leg"><span style="background:#93C5FD;border-radius:3px"></span>Train (données passées)</div>
+    <div class="wf-leg"><span style="background:var(--sun);border-radius:3px"></span>Test (données futures)</div>
+  </div>
+
+  <div class="metrics-grid" style="margin-top:1.5rem" id="metricsGrid">
+    <div class="metric-card">
+      <div class="metric-val metric-good" id="mAccuracy">—</div>
+      <div class="metric-label">Accuracy</div>
+      <div class="metric-baseline" id="mAccBaseline">baseline : —</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-val metric-warn" id="mLogLoss">—</div>
+      <div class="metric-label">Log Loss</div>
+      <div class="metric-baseline" id="mLLBaseline">baseline : —</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-val" style="color:var(--sky)" id="mMAEHome">—</div>
+      <div class="metric-label">MAE Buts Dom.</div>
+      <div class="metric-baseline">erreur absolue moyenne</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-val" style="color:var(--sky)" id="mMAEAway">—</div>
+      <div class="metric-label">MAE Buts Ext.</div>
+      <div class="metric-baseline">erreur absolue moyenne</div>
+    </div>
+  </div>
+
+  <div style="background:var(--white);border-radius:12px;border:1px solid var(--border);padding:1rem 1.25rem;font-size:.82rem;color:#78716C;line-height:1.7">
+    <strong style="color:var(--dark)">Comment lire ces métriques ?</strong><br>
+    L'<strong>accuracy</strong> mesure la proportion de résultats (H/D/A) correctement prédits. La baseline naïve est de prédire toujours le résultat le plus fréquent.
+    Le <strong>log loss</strong> pénalise la confiance mal placée : une proba de 90% sur le mauvais résultat est très pénalisée. Plus il est bas, mieux c'est.
+    Le <strong>MAE buts</strong> est l'erreur absolue moyenne sur le score prédit (±1 but en moyenne est typique pour ce type de modèle).
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
+     5. FEATURE IMPORTANCE
+══════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">Importance des Features</div>
+  <div class="section-sub">Contribution de chaque variable aux prédictions du classificateur XGBoost</div>
+  <div id="fiChart" style="max-width:700px"></div>
+  <p style="font-size:.78rem;color:#A8A29E;margin-top:.75rem;line-height:1.6">
+    Les features <code class="code-inline">ranking_gap_adj</code>, <code class="code-inline">home/away_rank_adj</code> et <code class="code-inline">top20_ratio</code> affichent une importance nulle car elles sont fortement corrélées au <code class="code-inline">ranking_gap</code> et aux rankings bruts. XGBoost sélectionne la feature la plus discriminante au moment du split — les autres sont éclipsées même si elles apportent de l'information marginale.
+  </p>
+</div>
+
+<!-- ══════════════════════════════════
+     6. SIMULATION MONTE CARLO
+══════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">Simulation Monte Carlo</div>
+  <div class="section-sub">Comment on passe des probabilités d'un match aux probabilités de titre ?</div>
+
+  <div class="sim-flow">
+
+    <div class="sim-step">
+      <div class="sim-dot" style="background:var(--sky)">1</div>
+      <div class="sim-content">
+        <h5>Prédiction match par match</h5>
+        <p>Pour chaque match, le modèle produit une distribution de probabilités <code class="code-inline">P(H), P(D), P(A)</code> et des scores attendus via les régresseurs.</p>
+      </div>
+    </div>
+    <div class="sim-connector"></div>
+
+    <div class="sim-step">
+      <div class="sim-dot" style="background:var(--grass)">2</div>
+      <div class="sim-content">
+        <h5>Score conditionnel pondéré</h5>
+        <p>Le score affiché n'est pas la moyenne brute, mais la <strong>moyenne pondérée des simulations cohérentes avec le résultat dominant</strong>. 
+            <br> Exemple : si Home est prédit, on filtre les 10 000 simulations où Home gagne pour calculer le score moyen — évitant d'afficher 2-1 / 1-0 pour une victoire nette.</p>
+      </div>
+    </div>
+    <div class="sim-connector"></div>
+
+    <div class="sim-step">
+      <div class="sim-dot" style="background:var(--gold)">3</div>
+      <div class="sim-content">
+        <h5>Simulation de la phase de groupes</h5>
+        <p>On tire aléatoirement les 72 matchs de groupe selon les probas. Les classements sont déterminés par pts → diff. de buts → buts marqués, puis les 8 meilleurs 3ème sont sélectionnés selon les règles FIFA.</p>
+      </div>
+    </div>
+    <div class="sim-connector"></div>
+
+    <div class="sim-step">
+      <div class="sim-dot" style="background:var(--sun)">4</div>
+      <div class="sim-content">
+        <h5>Simulation des phases finales</h5>
+        <p>L'arbre knockout est simulé en propagant les vainqueurs. En cas de nul en phase éliminatoire, une prolongation / tirs au but est simulée avec <code class="code-inline">P(home_wins_ET) ≈ 0.5</code> légèrement ajustée par le ranking.</p>
+      </div>
+    </div>
+    <div class="sim-connector"></div>
+
+    <div class="sim-step">
+      <div class="sim-dot" style="background:#EC4899">5</div>
+      <div class="sim-content">
+        <h5>Agrégation sur 10 000 itérations</h5>
+        <p>Les probabilités finales (atteindre les quart de finale, demi-finale, finale) sont les fréquences observées sur les 10 000 simulations complètes. Plus une équipe gagne souvent dans les simulations, plus sa probabilité est élevée.</p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</main>
+
+<script>
+/* ── DONNÉES PIPELINE ── */
+const STEPS = [
+  {
+    num:'①', color:'#6366F1',
+    title:'① init_db.py — Initialisation de la base',
+    desc:`Crée la base de données SQLite <code class="code-inline">data/wc2026.db</code> avec 4 tables :`,
+    points:[
+      '<strong>teams</strong> : référentiel de toutes les équipes nationales (nom, code pays, confédération, ranking FIFA, is_wc2026)',
+      '<strong>matches</strong> : dataset d\'entraînement — tous les matchs internationaux collectés avec résultats réels',
+      '<strong>wc2026_fixtures</strong> : calendrier CdM 2026',
+      '<strong>collection_log</strong> : checkpoint de collecte par compétition/saison',
+    ],
+    note:'Initialise le <em>collection_log</em> avec les 24 compétitions à collecter (sources : API-Football).',
+    outputs:['data/wc2026.db','teams','matches','wc2026_fixtures','collection_log'],
+    outputType:'db',
+    cmd:'python init_db.py',
+  },
+  {
+    num:'②', color:'#0EA5E9',
+    title:'② Collecte des données',
+    desc:`Deux scripts de collecte de données qui appellent les API <em>football-data.org</em> et <em>api-sports.io</em> :`,
+    points:[
+        '<strong>collect_WC2026_data.py</strong> : collecte le calendrier officiel CdM 2026 avec les 48 équipes qualifiées et les 104 matchs programmés',
+        '<strong>collect_football_data.py</strong> : collecte les matchs historiques (2022→2026) pour toutes les compétitions du collection_log (matchs amicaux, qualifications, tournois continentaux, CdM 2022)'
+    ],
+    note:'Un système de checkpoint (<code>collection_log</code>) évite de re-collecter des données déjà récupérées.',
+    outputs:['matches','wc2026_fixtures'],
+    outputType:'db',
+    cmd:'python collect_WC2026_data.py\npython collect_football_data.py',
+  },
+  {
+    num:'③', color:'#14B8A6',
+    title:'③ clean_database.py — Nettoyage du dataset',
+    desc:`Prépare et nettoie la table <code class="code-inline">matches</code> avant le feature engineering :`,
+    points:[
+      '<strong>Filtrage des amicaux</strong> : parmi les matchs amicaux, on ne garde que ceux où au moins une équipe est qualifiée pour la CdM 2026 — élimine les matchs entre équipes non qualifiées qui n\'apportent pas d\'information utile <br> Toutes les compétitions officielles (qualifications, tournois) sont conservées intégralement.',
+      '<strong>result_90</strong> : ajoute la colonne du résultat à 90 minutes strictes — pour les matchs PEN le résultat est D, pour AET on se base sur le goal_diff à 90min',
+      '<strong>result_winner</strong> : ajoute le vainqueur effectif (H/A uniquement), utile pour les phases finales où on veut connaître le qualifié indépendamment du score à 90min',
+    ],
+    note:"Ce script doit être lancé <strong>une seule fois</strong> après la collecte complète. Les colonnes <code>result_90</code> et <code>result_winner</code> sont indispensables — le feature engineering et l'entraînement échouent sans elles.",
+    outputs:['matches (filtrée)','result_90 (colonne)','result_winner (colonne)'],
+    outputType:'db',
+    cmd:'python clean_database.py',
+  },
+  {
+    num:'④', color:'#FBBF24',
+    title:'④ build_features.py — Feature Engineering',
+    desc:`Calcule les 29 features pour chaque match et les stocke dans <code>match_features</code> :`,
+    points:[
+      '<strong>Forme pondérée</strong> : pts moyens sur 5 et 10 matchs, pondérés par la qualité de l\'adversaire (confédération + ranking)',
+      '<strong>Ranking ajusté</strong> : ranking FIFA + pénalité confédération pour corriger les biais inter-confédérations',
+      '<strong>Head to Head intelligent</strong> : si pas d\'historique, imputation par une probabilité déduite du ranking gap via une fonction sigmoid calibrée',
+      '<strong>top20_ratio</strong> : proportion des 20 derniers matchs contre le top 20 mondial ajusté — mesure l\'expérience des grandes compétitions',
+    ],
+    note:'Toutes les features sont calculées <em>strictement avant</em> la date du match pour éviter tout leakage. L\'imputation (médiane) est calculée sur le train uniquement.',
+    outputs:['match_features (table, 29 colonnes)'],
+    outputType:'db',
+    cmd:'python build_features.py',
+  },
+  {
+    num:'⑤', color:'#16A34A',
+    title:'⑤ load_fifa_ranking.py — Rankings FIFA',
+    desc:`Importe les classements FIFA officiels dans la base :`,
+    points:[
+      'Récupère les rankings FIFA à une date donnée',
+      'Stocke l\'historique dans une table <strong>fifa_rankings</strong> datée',
+      'Résout les noms d\'équipes entre différentes sources (API-Football ↔ FIFA)',
+      'À l\'inférence, le ranking est lu via <code>MAX(rank_date)</code> pour toujours utiliser le plus récent',
+    ],
+    note:'Les rankings FIFA sont critiques : c\'est la feature la plus importante du modèle. Les utiliser à la date du match (et non la date actuelle) évite le leakage temporel.',
+    outputs:['fifa_rankings (table)'],
+    outputType:'db',
+    cmd:'python load_fifa_ranking.py',
+  },
+  {
+    num:'⑥', color:'#F97316',
+    title:'⑥ train_model.py — Entraînement',
+    desc:`Entraîne 3 modèles XGBoost + calibration sur l\'ensemble du dataset :`,
+    points:[
+      '<strong>XGBClassifier calibré</strong> : prédit P(H), P(D), P(A) — calibré par régression isotonique sur un hold-out temporel de 15%',
+      '<strong>XGBRegressor home_goals</strong> : prédit le nombre de buts de l\'équipe à domicile',
+      '<strong>XGBRegressor away_goals</strong> : prédit le nombre de buts de l\'équipe extérieure',
+      '<strong>Walk-forward validation</strong> : 6 fenêtres temporelles pour évaluer sans leakage',
+      '<strong>Sample weights</strong> : les matchs entre grandes équipes et en compétitions importantes ont plus de poids',
+    ],
+    note:'Hyperparamètres : 300 arbres, max depth 4, learning rate 0.05, subsample 0.8. Choix conservateurs pour éviter l\'overfitting.',
+    outputs:['models/classifier_calibrated.pkl','models/classifier.json','models/regressor_home.json','models/regressor_away.json','models/features.json','models/metrics.json'],
+    outputType:'model',
+    cmd:'python train_model.py',
+  },
+  {
+    num:'⑦', color:'#EC4899',
+    title:'⑦ Prédictions Monte Carlo',
+    desc:`Deux scripts de prédiction qui simulent le tournoi 10 000 fois :`,
+    points:[
+      '<strong>prediction_group_stage_WC.py</strong> : simule les 72 matchs de groupe, détermine les qualifiés (1ers, 2es, 8 meilleurs 3es) et calcule les probabilités de classement',
+      '<strong>prediction_knockout_WC.py</strong> : simule les phases éliminatoires match par match en propageant les vainqueurs des simulations de groupe',
+      '<em> Score affiché = moyenne conditionnelle des simulations cohérentes avec le résultat dominant (évite les scores aberrants type 1 - 0 pour une victoire claire) </em>',
+    ],
+    note:'Les features sont calculées dynamiquement à l\'inférence depuis les matchs joués et les matchs précédentes. La liste de features est lue depuis <code>features.json</code>.',
+    outputs:['wc2026_fixtures (prédictions)','group_standings','bracket_results'],
+    outputType:'db',
+    cmd:'python prediction_group_stage_WC.py\npython prediction_knockout_WC.py',
+  },
+  {
+    num:'⑧', color:'#A8A29E',
+    title:'⑧ export_data.py — Export Data',
+    desc:`Exporte tout ce dont le site a besoin en 5 fichiers JSON statiques :`,
+    points:[
+      '<strong>predictions.json</strong> : résumé global (équipes, classements de groupes, bracket, métriques modèle)',
+      '<strong>groups.json</strong> : détail des phases de groupe avec prédictions',
+      '<strong>bracket.json</strong> : arbre des phases finales avec probabilités',
+      '<strong>data.json</strong> : tous les matchs d\'entraînement pour la page Données',
+      '<strong>model.json</strong> : métriques de validation, feature importance',
+    ],
+    outputs:['data/predictions.json','data/groups.json','data/bracket.json','data/data.json','data/model.json'],
+    outputType:'',
+    cmd:'python export_data.py',
+  },
+];
+
+function showStep(i){
+  const s = STEPS[i];
+  document.querySelectorAll('.pipeline-step').forEach((el,j) => {
+    el.classList.toggle('active', j===i);
+  });
+  const d = document.getElementById('stepDetail');
+  const typeClass = s.outputType === 'db' ? 'db' : s.outputType === 'model' ? 'model' : '';
+  d.style.display = 'block';
+  d.innerHTML = `
+    <h3>${s.title}</h3>
+    <div class="detail-tag">Description</div>
+    <p>${s.desc}</p>
+    <ul style="margin:0 0 .75rem 1.1rem;font-size:.82rem;color:var(--mid);line-height:1.8">
+      ${s.points.map(p=>`<li>${p}</li>`).join('')}
+    </ul>
+    ${s.note ? `<div class="detail-tag">Note</div><p style="font-size:.8rem;background:#FFFBF5;border-left:3px solid var(--gold);padding:.5rem .75rem;border-radius:0 6px 6px 0;color:var(--mid)">${s.note}</p>` : ''}
+    <div class="detail-tag">Commande</div>
+    <pre style="font-family:'JetBrains Mono',monospace;font-size:.75rem;background:var(--dark);color:#86EFAC;padding:.75rem 1rem;border-radius:8px;overflow-x:auto;margin-bottom:.75rem">${s.cmd}</pre>
+    <div class="detail-tag">Outputs</div>
+    <div class="step-outputs">
+      ${s.outputs.map(o=>`<span class="output-pill ${typeClass}">${o}</span>`).join('')}
+    </div>`;
+}
+
+/* ── WALK-FORWARD VISUAL ── */
+const WF_SPLITS = [
+  {label:'W1', trainEnd:'2023-06', testStart:'2023-07', testEnd:'2023-10'},
+  {label:'W2', trainEnd:'2023-10', testStart:'2023-11', testEnd:'2024-03'},
+  {label:'W3', trainEnd:'2024-03', testStart:'2024-04', testEnd:'2024-09'},
+  {label:'W4', trainEnd:'2024-09', testStart:'2024-10', testEnd:'2025-03'},
+  {label:'W5', trainEnd:'2025-03', testStart:'2025-04', testEnd:'2025-09'},
+  {label:'W6', trainEnd:'2025-09', testStart:'2025-10', testEnd:'2026-06'},
+];
+
+const START_MS = new Date('2022-11-01').getTime();
+const END_MS   = new Date('2026-07-01').getTime();
+const TOTAL_MS = END_MS - START_MS;
+
+function toDate(s){ return new Date(s+'-01').getTime(); }
+function pct(d){ return Math.max(0,Math.min(100,(toDate(d)-START_MS)/TOTAL_MS*100)); }
+
+const tl = document.getElementById('wfTimeline');
+WF_SPLITS.forEach(w => {
+  const trainW = pct(w.trainEnd);
+  const testL  = pct(w.testStart);
+  const testW  = pct(w.testEnd) - testL;
+  tl.innerHTML += `
+  <div class="wf-row">
+    <div class="wf-label">${w.label}</div>
+    <div class="wf-bar-wrap">
+      <div class="wf-train" style="width:${trainW}%"></div>
+      <div class="wf-test"  style="left:${testL}%;width:${testW}%"></div>
+    </div>
+  </div>`;
+});
+
+/* ── MÉTRIQUES + FEATURE IMPORTANCE depuis model.json ── */
+
+function FEAT_COLOR(label){
+  if(label.includes('ranking') || label.includes('Ranking')) return '#6366F1';
+  if(label.includes('H2H') || label.includes('h2h'))        return '#0EA5E9';
+  if(label.includes('dom.') || label.includes('domicile'))  return '#F97316';
+  if(label.includes('ext.') || label.includes('extérieur')) return '#EC4899';
+  if(label.includes('Phase') || label.includes('compétition') || label.includes('neutre')) return '#16A34A';
+  return '#A8A29E';
+}
+
+function buildFIChart(fi){
+  if(!fi || !fi.length){ document.getElementById('fiChart').innerHTML = '<p style="color:#A8A29E;font-size:.82rem">Données non disponibles — lance export_data.py</p>'; return; }
+  const maxImp = Math.max(...fi.map(f=>f.importance));
+  const chart = document.getElementById('fiChart');
+  chart.innerHTML = fi.map(f => {
+    if(f.importance === 0) return `
+      <div class="fi-row">
+        <div class="fi-label" title="${f.feature}" style="color:#D6D3CE">${f.label}</div>
+        <div class="fi-bar-wrap"><div class="fi-bar" style="width:1%;background:#E7E5E4"></div></div>
+        <span class="fi-zero">0%</span>
+      </div>`;
+    const w = Math.max(1.5, (f.importance/maxImp)*100);
+    const color = FEAT_COLOR(f.label);
+    return `
+      <div class="fi-row">
+        <div class="fi-label" title="${f.feature}">${f.label}</div>
+        <div class="fi-bar-wrap">
+          <div class="fi-bar" style="width:${w.toFixed(1)}%;background:${color}">
+            <span class="fi-val">${(f.importance*100).toFixed(1)}%</span>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function applyMetrics(data){
+  const m = data.summary || data;
+  const fi = data.feature_importance || null;
+
+  // Métriques cards
+  document.getElementById('mAccuracy').textContent  = (m.accuracy*100).toFixed(1)+'%';
+  document.getElementById('mAccBaseline').textContent = 'baseline naïve : '+(m.baseline_accuracy*100).toFixed(1)+'%';
+  document.getElementById('mLogLoss').textContent   = m.log_loss.toFixed(3);
+  document.getElementById('mLLBaseline').textContent = 'baseline naïve : '+m.baseline_log_loss.toFixed(3);
+  document.getElementById('mMAEHome').textContent   = '±'+m.mae_home.toFixed(2);
+  document.getElementById('mMAEAway').textContent   = '±'+m.mae_away.toFixed(2);
+
+  // Gain badges
+  const accGain = ((m.accuracy - m.baseline_accuracy)*100).toFixed(1);
+  const llGain  = (m.baseline_log_loss - m.log_loss).toFixed(3);
+  // Supprimer les badges existants avant de re-créer (évite les doublons si rechargé)
+  document.querySelectorAll('.gain-badge').forEach(el => el.remove());
+  document.getElementById('mAccuracy').insertAdjacentHTML('afterend',
+    `<div class="gain-badge" style="background:#F0FDF4;color:var(--grass);margin-top:.3rem">+${accGain}pp vs baseline</div>`);
+  document.getElementById('mLogLoss').insertAdjacentHTML('afterend',
+    `<div class="gain-badge" style="background:#F0FDF4;color:var(--grass);margin-top:.3rem">−${llGain} vs baseline</div>`);
+
+  buildFIChart(fi);
+}
+
+async function loadMetrics(){
+  // On essaie model.json en premier (métriques complètes),
+  // puis predictions.json (même source que index.html → accuracy cohérente),
+  // puis fallback sur les données embarquées.
+  const sources = ['../data/model.json', '../data/predictions.json'];
+  for(const src of sources){
+    try {
+      const res = await fetch(src);
+      if(!res.ok) continue;
+      const raw = await res.json();
+      // predictions.json encapsule les métriques sous raw.model
+      const data = src.includes('predictions') && raw.model
+        ? { summary: { ...raw.model, baseline_log_loss: raw.model.baseline_log_loss, mae_home: raw.model.mae_home, mae_away: raw.model.mae_away }, feature_importance: null }
+        : raw;
+      applyMetrics(data);
+      return;
+    } catch(e) {
+      console.warn(`${src} indisponible :`, e.message);
+    }
+  }
+  // Aucun JSON disponible : on laisse les cards à —
+  buildFIChart(null);
+}
+
+loadMetrics();
+</script>

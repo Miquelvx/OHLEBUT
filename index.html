@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WC2026 Predictor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./css_pages/css_index.css">
+
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <a class="nav-logo" href="./index.html">OhLeBut ⚽</a>
+  <div class="nav-links">
+    <a href="./index.html" class="active">Accueil</a>
+    <a href="./pages/groups.html">Groupes</a>
+    <a href="./pages/bracket.html">Bracket</a>
+    <a href="./pages/model.html">Modèle</a>
+    <a href="./pages/data.html">Données</a>
+  </div>
+</nav>
+
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-badge">🏆 Coupe du Monde 2026</div>
+  <h1>OhLeBut<br><span>Predictor</span></h1>
+  <p>Prédictions entraîné sur l'ensemble des matchs internationaux depuis la CDM 2022.</p>
+  <div class="hero-hosts">
+    <span class="host-pill"><img src="https://flagcdn.com/w40/us.png" style="width:30px;height:20px;object-fit:cover;border-radius:2px;vertical-align:middle;"> États-Unis</span>
+    <span class="host-pill"><img src="https://flagcdn.com/w40/ca.png" style="width:30px;height:20px;object-fit:cover;border-radius:2px;vertical-align:middle;"> Canada</span>
+    <span class="host-pill"><img src="https://flagcdn.com/w40/mx.png" style="width:30px;height:20px;object-fit:cover;border-radius:2px;vertical-align:middle;"> Mexique</span>
+  </div>
+</section>
+
+<!-- TRACKER -->
+<div class="tracker-section">
+  <div class="tracker-card">
+    <div class="tracker-header">
+      <div class="tracker-title">Progression du tournoi</div>
+      <div class="tracker-count" id="matchCount">0 <span>/ 0 matchs</span></div>
+    </div>
+    <div class="progress-bar">
+      <div class="progress-fill" id="progressFill" style="width:0%"></div>
+    </div>
+  </div>
+</div>
+
+<!-- STATS RAPIDES -->
+<section class="section fade-in">
+  <div class="stats-row" id="statsRow">
+    <div class="stat-card"><div class="stat-num">48</div><div class="stat-label">Équipes qualifiées</div></div>
+    <div class="stat-card"><div class="stat-num">104</div><div class="stat-label">Matchs au total</div></div>
+    <div class="stat-card"><div class="stat-num" id="trainingStat">—</div><div class="stat-label">Matchs d'entraînement</div></div>
+    <div class="stat-card"><div class="stat-num">10 000</div><div class="stat-label">Simulations Monte Carlo</div></div>
+    <div class="stat-card"><div class="stat-num" id="accuracyStat">—</div><div class="stat-label">Accuracy du modèle</div></div>
+  </div>
+</section>
+
+<!-- INFOS TOURNOI -->
+<section class="section fade-in">
+  <div class="section-header">
+    <div class="section-title">Le Tournoi</div>
+    <div class="section-sub">11 juin — 19 juillet 2026</div>
+  </div>
+  <div class="info-grid">
+    <div class="info-card">
+      <div class="info-label">Début</div>
+      <div class="info-value">11 juin 2026</div>
+      <div class="info-sub">Stade Azteca, Mexico City</div>
+    </div>
+    <div class="info-card">
+      <div class="info-label">Finale</div>
+      <div class="info-value">19 juillet 2026</div>
+      <div class="info-sub">MetLife Stadium, New Jersey</div>
+    </div>
+    <div class="info-card">
+      <div class="info-label">Matchs</div>
+      <div class="info-value">104 matchs</div>
+      <div class="info-sub">72 groupes + 32 éliminatoires</div>
+    </div>
+    <div class="info-card">
+      <div class="info-label">Champion en titre</div>
+      <div class="info-value">🇦🇷 Argentine</div>
+      <div class="info-sub">CDM 2022 — Qatar</div>
+    </div>
+  </div>
+</section>
+
+<!-- ÉQUIPES PAR GROUPE -->
+<section class="section fade-in">
+  <div class="section-header">
+    <div class="section-title">Les 48 équipes</div>
+    <div class="section-sub">Classées par ranking FIFA.</div>
+  </div>
+  <div id="teamsContainer">
+    <div style="color:#A8A29E;padding:2rem;">Les données ne sont pas encore disponibles.
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <p>© 2026 / Mike Leveleux · WC2026 Predictor</p>
+  <p style="margin-top:.5rem">Données : API-sports.io · football-data.org · FIFA Rankings</p>
+</footer>
+
+<script src="../pages/assets.js"></script>
+<script>
+
+async function loadData() {
+  try {
+    const res  = await fetch('data/predictions.json');
+    const data = await res.json();
+    renderTracker(data.progress);
+    renderAccuracy(data.model.accuracy);
+    renderTrainCount(data.model.nb_train_matches);
+    renderGroups(data.teams);
+  } catch(e) {
+    console.error('Erreur chargement:', e);
+  }
+}
+
+function renderTracker(progress) {
+  // Compteur
+  document.getElementById('matchCount').innerHTML =
+    `${progress.played} <span>/ ${progress.total} matchs joués</span>`;
+
+  // Barre
+  setTimeout(() => {
+    document.getElementById('progressFill').style.width = progress.pct + '%';
+  }, 300);
+}
+
+function renderAccuracy(acc) {
+  if (acc) {
+    document.getElementById('accuracyStat').textContent =
+      (acc * 100).toFixed(1) + '%';
+  }
+}
+
+function renderTrainCount(nb) {
+  if (nb != null) {
+    document.getElementById('trainingStat').textContent =
+      nb.toLocaleString('fr-FR');
+  }
+}
+
+// Map code pays → code flagcdn
+// FLAG_CODES, CONF_SHORT → shared.js
+function rankClass(r) {
+  if (!r) return '';
+  if (r <= 10) return 'top10';
+  if (r <= 30) return 'top30';
+  return '';
+}
+
+function renderGroups(teams) {
+  // Trier par ranking FIFA croissant
+  const sorted = [...teams].sort((a, b) => (a.ranking || 999) - (b.ranking || 999));
+
+  const container = document.getElementById('teamsContainer');
+  container.innerHTML = '';
+
+  const tbl = document.createElement('table');
+  tbl.className = 'teams-table';
+
+  sorted.forEach(t => {
+    const conf = t.confederation || '';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="t-rank-num ${rankClass(t.ranking)}">#${t.ranking || '?'}</td>
+      <td style="width:28px">${flag(t.name, 24, 16)}</td>
+      <td class="t-name">${t.name}</td>
+      <td>
+        <div class="t-badges">
+          <span class="t-conf t-conf-${conf}">${CONF_SHORT[conf] || conf}</span>
+          <span class="t-group">Grp. ${t.group}</span>
+        </div>
+      </td>`;
+    tbl.appendChild(tr);
+  });
+
+  container.appendChild(tbl);
+}
+// Scroll animations
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) e.target.classList.add('visible');
+  });
+}, { threshold: 0.1 });
+document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+
+loadData();
+</script>
+</body>
+</html>

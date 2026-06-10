@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Données — WC2026 Predictor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css_pages/css_data.css">
+
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="../index.html">OhLeBut ⚽</a>
+  <div class="nav-links">
+    <a href="../index.html">Accueil</a>
+    <a href="groups.html">Groupes</a>
+    <a href="bracket.html">Bracket</a>
+    <a href="model.html">Modèle</a>
+    <a href="data.html" class="active">Données</a>
+  </div>
+</nav>
+
+<div class="page-header">
+  <h1>Données <span>d'Entraînement</span></h1>
+  <p>Matchs internationaux collectés de la CDM 2022 à la CDM 2026</p>
+</div>
+
+<main class="main">
+
+  <!-- STATS CARDS -->
+  <div id="statsGrid" class="stats-grid"></div>
+
+  <!-- TIMELINE -->
+  <div class="timeline-section">
+    <div class="section-title">Timeline des compétitions</div>
+    <div class="section-sub">Couverture temporelle depuis la Coupe du Monde 2022 · chaque barre = matchs de la compétition sur la période</div>
+    <div class="timeline-scroll">
+      <div class="timeline-chart" id="timelineChart"></div>
+    </div>
+  </div>
+
+  <!-- FILTRES + TABLE -->
+  <div class="section-title">Explorer les matchs</div>
+  <div class="section-sub">2 537 matchs d'entraînement · filtrables par compétition, équipe, résultat</div>
+
+  <div class="filters-bar">
+    <div class="filter-group">
+      <label>Compétition</label>
+      <select id="fComp"><option value="">Toutes</option></select>
+    </div>
+    <div class="filter-group">
+      <label>Équipe</label>
+      <input type="text" id="fTeam" placeholder="ex. France, Brazil…">
+    </div>
+    <div class="filter-group">
+      <label>Résultat</label>
+      <select id="fResult">
+        <option value="">Tous</option>
+        <option value="H">Victoire domicile (H)</option>
+        <option value="D">Match nul (D)</option>
+        <option value="A">Victoire extérieur (A)</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label>&nbsp;</label>
+      <button class="btn-reset" id="btnReset">↺ Réinitialiser</button>
+    </div>
+  </div>
+
+  <div class="results-summary" id="resultsSummary"></div>
+
+  <div class="matches-table-wrap">
+    <table class="matches-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Compétition</th>
+          <th>Phase</th>
+          <th>Domicile</th>
+          <th>Score</th>
+          <th>Extérieur</th>
+          <th>Résultat</th>
+        </tr>
+      </thead>
+      <tbody id="matchesBody"></tbody>
+    </table>
+  </div>
+
+  <div class="pagination" id="pagination"></div>
+
+</main>
+
+<script src="assets.js"></script>
+<script>
+// COMP_COLORS, compColor() → shared.js
+
+/* ──────────────────────────────────────
+   INIT
+─────────────────────────────────────── */
+async function init(){
+  let data;
+  try{
+    const res = await fetch('../data/training.json');
+    if(!res.ok) throw new Error();
+    data = await res.json();
+  } catch(e){
+    document.querySelector('.main').innerHTML = `
+      <div style="padding:3rem;text-align:center;color:#A8A29E">
+        ❌ Les données ne sont pas disponibles.<br>
+        Veuillez réessayer plus tard.
+      </div>`;
+    return;
+  }
+
+  const matches    = data.matches || [];
+  const byComp     = data.by_competition || [];
+  const resultDist = data.result_dist || {};
+
+  buildStats(matches, byComp, resultDist);
+  buildTimeline(matches, byComp);
+  buildTable(matches);
+}
+
+/* ──────────────────────────────────────
+   STATS CARDS
+─────────────────────────────────────── */
+function buildStats(matches, byComp, resultDist){
+  const teams = new Set();
+  matches.forEach(m => { teams.add(m.home); teams.add(m.away); });
+  const seasons = new Set(matches.map(m => m.season));
+  const comps   = new Set(matches.map(m => m.competition));
+
+  const total = matches.length || 1;
+  const cards = [
+    { num: matches.length.toLocaleString('fr-FR'), label: 'Matchs' },
+    { num: comps.size, label: 'Compétitions' },
+    { num: teams.size, label: 'Équipes' },
+    { num: seasons.size, label: 'Saisons' },
+    { num: Math.round((resultDist.H||0)/total*100)+'%', label: '% Victoires dom.' },
+    { num: Math.round((resultDist.D||0)/total*100)+'%', label: '% Nuls' },
+    { num: Math.round((resultDist.A||0)/total*100)+'%', label: '% Victoires ext.' },
+  ];
+  document.getElementById('statsGrid').innerHTML = cards.map(c => `
+    <div class="stat-card">
+      <div class="stat-num">${c.num}</div>
+      <div class="stat-label">${c.label}</div>
+    </div>`).join('');
+}
+
+/* ──────────────────────────────────────
+   TIMELINE
+─────────────────────────────────────── */
+function buildTimeline(matches, byComp){
+  // Bornes temporelles
+  const dates = matches.map(m => new Date(m.date)).filter(d => !isNaN(d));
+  const minD  = new Date(Math.min(...dates));
+  const maxD  = new Date(Math.max(...dates));
+  const startM = new Date(minD.getFullYear(), minD.getMonth(), 1);
+  const endM   = new Date(maxD.getFullYear(), maxD.getMonth()+1, 1);
+  const totalMs = endM - startM;
+
+  // Months list for axis
+  const months = [];
+  let cur = new Date(startM);
+  while(cur < endM){ months.push(new Date(cur)); cur.setMonth(cur.getMonth()+1); }
+
+  // Density (matchs par mois)
+  const density = new Array(months.length).fill(0);
+  matches.forEach(m => {
+    const d = new Date(m.date);
+    if(isNaN(d)) return;
+    const dm = new Date(d.getFullYear(), d.getMonth(), 1);
+    const idx = months.findIndex(mm => mm.getTime() === dm.getTime());
+    if(idx >= 0) density[idx]++;
+  });
+  const maxDensity = Math.max(...density, 1);
+
+  // ── Par compétition + saison : blocs séparés ──
+  // Pour International Friendlies, on groupe par année calendaire du match
+  // pour éviter le chevauchement quand une saison déborde d'une année sur l'autre.
+  // Pour les autres compétitions, on groupe par saison (édition).
+  const YEAR_GROUP_COMPS = new Set(['International Friendlies']);
+  const compSeasons = {};
+  matches.forEach(m => {
+    const d = new Date(m.date);
+    const ts = d.getTime();
+    if(isNaN(ts)) return;
+    const c = m.competition;
+    // Clé : pour les amicaux, on utilise l'année calendaire ; sinon la saison
+    const s = YEAR_GROUP_COMPS.has(c) ? String(d.getFullYear()) : (m.season || 'unknown');
+    if(!compSeasons[c]) compSeasons[c] = {};
+    if(!compSeasons[c][s]) compSeasons[c][s] = {min:Infinity, max:-Infinity, count:0};
+    compSeasons[c][s].min = Math.min(compSeasons[c][s].min, ts);
+    compSeasons[c][s].max = Math.max(compSeasons[c][s].max, ts);
+    compSeasons[c][s].count++;
+  });
+
+  // Date de premier match par compétition (pour trier les lignes)
+  const compFirstDate = {};
+  Object.keys(compSeasons).forEach(c => {
+    compFirstDate[c] = Math.min(...Object.values(compSeasons[c]).map(s => s.min));
+  });
+  const sortedComps = Object.keys(compSeasons).sort((a,b) => compFirstDate[a] - compFirstDate[b]);
+
+  const chart = document.getElementById('timelineChart');
+
+  // ── Axe : bande années (fond) + mois ──
+  // On calcule la position % de chaque début d'année
+  const yearChanges = [];
+  months.forEach((m, i) => {
+    if(m.getMonth() === 0 || i === 0) yearChanges.push({idx: i, year: m.getFullYear()});
+  });
+
+  // Axe en deux niveaux : années (ligne du haut) + mois (ligne du bas)
+  const LABEL_W = 198;
+  let axisHTML = `
+  <div style="margin-left:${LABEL_W}px;position:relative;margin-bottom:0">
+    <!-- Années -->
+    <div style="display:flex;height:20px;border-bottom:2px solid var(--dark)">`;
+  // Grouper les mois par année pour les blocs année
+  let yearGroups = {};
+  months.forEach(m => {
+    const y = m.getFullYear();
+    if(!yearGroups[y]) yearGroups[y] = 0;
+    yearGroups[y]++;
+  });
+  Object.keys(yearGroups).sort().forEach(yr => {
+    const flexVal = yearGroups[yr];
+    axisHTML += `<div style="flex:${flexVal};display:flex;align-items:center;justify-content:flex-start;padding-left:4px;border-left:2px solid var(--dark);background:#F0EDE8">
+      <span style="font-family:'Bebas Neue',sans-serif;font-size:.9rem;letter-spacing:.08em;color:var(--dark)">${yr}</span>
+    </div>`;
+  });
+  axisHTML += `</div>
+    <!-- Mois -->
+    <div style="display:flex;height:18px;border-bottom:1px solid #D6D3CE;margin-bottom:4px">`;
+  const MO_FR = ['jan','fév','mar','avr','mai','jun','jul','aoû','sep','oct','nov','déc'];
+  months.forEach((m, i) => {
+    const mo = MO_FR[m.getMonth()];
+    axisHTML += `<div style="flex:1;border-left:1px solid #E7E5E4;padding-left:2px;overflow:hidden">
+      <span style="font-size:.6rem;color:#78716C;white-space:nowrap">${mo}</span>
+    </div>`;
+  });
+  axisHTML += `</div>
+  </div>`;
+
+  // ── Density bar ──
+  let densityHTML = `<div style="display:flex;align-items:flex-end;height:40px;margin-left:${LABEL_W}px;margin-bottom:6px;gap:1px">`;
+  density.forEach((v,i) => {
+    const h = Math.max(2, Math.round(v/maxDensity*38));
+    const mo = months[i];
+    const label = MO_FR[mo.getMonth()]+' '+mo.getFullYear()+' · '+v+' matchs';
+    densityHTML += `<div style="flex:1;height:${h}px;background:var(--sun);border-radius:2px 2px 0 0;opacity:.65;min-width:1px;cursor:default" title="${label}"></div>`;
+  });
+  densityHTML += '</div>';
+
+  // ── Rows : une ligne par compétition, plusieurs blocs par saison ──
+  let rowsHTML = '';
+  sortedComps.forEach(comp => {
+    const seasons = compSeasons[comp];
+    // Trier les saisons chronologiquement
+    const sortedSeasons = Object.keys(seasons).sort((a,b) => seasons[a].min - seasons[b].min);
+    const color = compColor(comp);
+
+    let segmentsHTML = '';
+    sortedSeasons.forEach(season => {
+      const sd = seasons[season];
+      // Snap min au 1er du mois, max au DERNIER JOUR du mois (pas +1 pour éviter chevauchement)
+      const dMin = new Date(sd.min);
+      const dMax = new Date(sd.max);
+      const snapMin = new Date(dMin.getFullYear(), dMin.getMonth(), 1).getTime();
+      // Fin = fin du mois du dernier match, sans déborder sur le mois suivant
+      const snapMax = new Date(dMax.getFullYear(), dMax.getMonth() + 1, 0, 23, 59, 59).getTime();
+      const leftPct  = Math.max(0, (snapMin - startM) / totalMs * 100);
+      const rightEndMs = Math.min(snapMax, endM.getTime());
+      const widthPct = Math.max(0.6, (rightEndMs - snapMin) / totalMs * 100);
+      const tooltip  = `${comp} ${season} · ${sd.count} matchs`;
+      // Largeur en px approx pour décider du style du label
+      // On affiche toujours le count, mais en dehors de la barre si elle est trop étroite
+      const isNarrow = widthPct < 3;
+      segmentsHTML += `<div class="tl-segment" style="left:${leftPct.toFixed(2)}%;width:${widthPct.toFixed(2)}%;background:${color};opacity:.85;overflow:visible" title="${tooltip}">
+        ${!isNarrow
+          ? `<span class="tl-count" style="font-size:.58rem">${sd.count}</span>`
+          : `<span style="position:absolute;left:calc(100% + 2px);top:50%;transform:translateY(-50%);font-size:.58rem;font-weight:700;color:${color};white-space:nowrap;pointer-events:none">${sd.count}</span>`
+        }
+      </div>`;
+    });
+
+    rowsHTML += `
+    <div class="tl-row">
+      <div class="tl-label" title="${comp}">${comp}</div>
+      <div class="tl-bar-wrap">${segmentsHTML}</div>
+    </div>`;
+  });
+
+  // ── Légende ──
+  let legendHTML = '<div class="tl-legend">';
+  sortedComps.forEach(c => {
+    legendHTML += `<div class="tl-leg-item"><span class="tl-leg-dot" style="background:${compColor(c)}"></span>${c}</div>`;
+  });
+  legendHTML += '</div>';
+
+  chart.innerHTML = axisHTML + densityHTML + rowsHTML + legendHTML;
+}
+
+/* ──────────────────────────────────────
+   TABLE + FILTRES
+─────────────────────────────────────── */
+const PAGE_SIZE = 50;
+let allMatches   = [];
+let filtered     = [];
+let currentPage  = 1;
+
+function buildTable(matches){
+  allMatches = [...matches].sort((a,b) => new Date(b.date) - new Date(a.date));
+
+  // Remplir select compétitions
+  const comps = [...new Set(allMatches.map(m => m.competition))].sort();
+  const sel = document.getElementById('fComp');
+  comps.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c; opt.textContent = c;
+    sel.appendChild(opt);
+  });
+
+  // Listeners
+  ['fComp','fResult'].forEach(id => {
+    document.getElementById(id).addEventListener('change', applyFilters);
+  });
+  document.getElementById('fTeam').addEventListener('input', applyFilters);
+  document.getElementById('btnReset').addEventListener('click', () => {
+    document.getElementById('fComp').value   = '';
+    document.getElementById('fTeam').value   = '';
+    document.getElementById('fResult').value = '';
+    applyFilters();
+  });
+
+  applyFilters();
+}
+
+function applyFilters(){
+  const comp   = document.getElementById('fComp').value;
+  const team   = document.getElementById('fTeam').value.trim().toLowerCase();
+  const result = document.getElementById('fResult').value;
+
+  filtered = allMatches.filter(m => {
+    if(comp   && m.competition !== comp) return false;
+    if(result && m.result      !== result) return false;
+    if(team){
+      const h = m.home.toLowerCase();
+      const a = m.away.toLowerCase();
+      if(!h.includes(team) && !a.includes(team)) return false;
+    }
+    return true;
+  });
+
+  currentPage = 1;
+  renderSummary();
+  renderPage();
+  renderPagination();
+}
+
+function renderSummary(){
+  const n = filtered.length;
+  const H = filtered.filter(m=>m.result==='H').length;
+  const D = filtered.filter(m=>m.result==='D').length;
+  const A = filtered.filter(m=>m.result==='A').length;
+  document.getElementById('resultsSummary').innerHTML = `
+    <span class="res-count"><strong>${n.toLocaleString('fr-FR')}</strong> matchs</span>
+    <div class="res-dist">
+      <span class="res-pill res-H">H ${H}</span>
+      <span class="res-pill res-D">N ${D}</span>
+      <span class="res-pill res-A">E ${A}</span>
+    </div>`;
+}
+
+// TEAM_FLAGS, flagImg() → utilise flag() de shared.js
+function flagImg(name){ return flag(name, 20, 13); }
+
+function renderPage(){
+  const start = (currentPage-1)*PAGE_SIZE;
+  const page  = filtered.slice(start, start+PAGE_SIZE);
+  const tbody = document.getElementById('matchesBody');
+
+  tbody.innerHTML = page.map(m => {
+    const color = compColor(m.competition);
+    const resClass = m.result === 'H' ? 'res-H' : m.result === 'A' ? 'res-A' : 'res-D';
+    const resLabel = m.result === 'H' ? 'Dom.' : m.result === 'A' ? 'Ext.' : 'Nul';
+    const dateStr = new Date(m.date).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'});
+    const neutralIcon = m.neutral ? '<span class="neutral-icon" title="Terrain neutre">⚬</span>' : '';
+
+    return `<tr>
+      <td class="td-date">${dateStr}</td>
+      <td class="td-comp"><span class="comp-badge" style="background:${color}22;color:${color}">${m.competition}</span></td>
+      <td class="td-stage">${m.stage || ''}</td>
+      <td class="td-teams" style="white-space:nowrap">${flagImg(m.home)} ${m.home}${neutralIcon}</td>
+      <td class="td-score">${m.home_goals} – ${m.away_goals}</td>
+      <td class="td-teams" style="white-space:nowrap">${flagImg(m.away)} ${m.away}</td>
+      <td><span class="result-badge ${resClass}">${resLabel}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderPagination(){
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const pg = document.getElementById('pagination');
+  if(totalPages <= 1){ pg.innerHTML=''; return; }
+
+  let html = `<button class="page-btn" ${currentPage===1?'disabled':''} onclick="goPage(${currentPage-1})">‹</button>`;
+
+  // Fenêtre de pages autour de la page courante
+  const delta = 2;
+  const range = [];
+  for(let i=Math.max(1,currentPage-delta); i<=Math.min(totalPages,currentPage+delta); i++) range.push(i);
+  if(range[0] > 1){ html += `<button class="page-btn" onclick="goPage(1)">1</button>`; if(range[0]>2) html += `<span class="page-info">…</span>`; }
+  range.forEach(p => { html += `<button class="page-btn ${p===currentPage?'active':''}" onclick="goPage(${p})">${p}</button>`; });
+  if(range[range.length-1] < totalPages){ if(range[range.length-1]<totalPages-1) html += `<span class="page-info">…</span>`; html += `<button class="page-btn" onclick="goPage(${totalPages})">${totalPages}</button>`; }
+
+  html += `<button class="page-btn" ${currentPage===totalPages?'disabled':''} onclick="goPage(${currentPage+1})">›</button>`;
+  html += `<span class="page-info">${((currentPage-1)*PAGE_SIZE+1).toLocaleString('fr-FR')}–${Math.min(currentPage*PAGE_SIZE,filtered.length).toLocaleString('fr-FR')} / ${filtered.length.toLocaleString('fr-FR')}</span>`;
+
+  pg.innerHTML = html;
+}
+
+function goPage(p){
+  currentPage = p;
+  renderPage();
+  renderPagination();
+  document.querySelector('.matches-table-wrap').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+init();
+</script>
+</body>
+</html>

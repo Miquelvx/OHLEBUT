@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Groupes — WC2026 Predictor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css_pages/css_groups.css">
+
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="../index.html">OhLeBut ⚽</a>
+  <div class="nav-links">
+    <a href="../index.html">Accueil</a>
+    <a href="groups.html" class="active">Groupes</a>
+    <a href="bracket.html">Bracket</a>
+    <a href="model.html">Modèle</a>
+    <a href="data.html">Données</a>
+  </div>
+</nav>
+
+<div class="page-header">
+  <h1>Phase de <span>Groupes</span></h1>
+  <p>48 équipes · 12 groupes · 72 matchs — Classements & prédictions.</p>
+</div>
+
+<div class="filter-bar">
+  <span class="filter-label">Groupe</span>
+  <button class="filter-btn all-btn active" data-grp="ALL">Tous</button>
+  <!-- Les boutons par groupe sont générés par JS -->
+  <span id="groupFilterBtns"></span>
+</div>
+
+<main class="main" id="mainContent">
+  <div class="loading">Chargement des données…</div>
+</main>
+
+<script src="assets.js"></script>
+<script>
+// FLAGS, flag() → shared.js
+
+function qualClass(qual, pos) {
+  if (qual === '1ST')      return 'qual-1ST';
+  if (qual === '2ND')      return 'qual-2ND';
+  if (qual === '3RD_BEST' || pos === 3) return 'qual-3RD';
+  return 'qual-OUT';
+}
+function qualLabel(qual,pos) {
+  if (qual === '1ST')      return '1er';
+  if (qual === '2ND')      return '2e';
+  if (qual === '3RD_BEST' || pos === 3) return '3e*';
+  return 'Éliminé';
+}
+
+function probColor(p) {
+  if (p >= .7) return '#16A34A';
+  if (p >= .4) return '#F97316';
+  return '#EF4444';
+}
+
+function fmtDate(str) {
+  if (!str) return '';
+  const d = new Date(str);
+  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
+}
+
+function renderStandings(teams) {
+  const cols = ['J','V','N','D','BP','BC','Diff','Pts'];
+  const colKeys = ['played','w','d','l','gf','ga','gd','pts'];
+  return `
+  <div class="standings-card">
+    <table class="standings-table">
+      <thead>
+        <tr>
+          <th style="width:38%">Équipe</th>
+          ${cols.map(c=>`<th>${c}</th>`).join('')}
+          <th>Qual.</th>
+          <th style="min-width:100px">Prob. Qual.</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${teams.map((t,i)=>{
+          const qc = qualClass(t.qual, t.pos);
+          const pctQual = Math.round(t.pq * 100);
+          const gd = t.gd >= 0 ? '+'+t.gd : t.gd;
+          return `<tr>
+            <td>
+              <div class="team-cell">
+                <span class="pos-num">${t.pos}</span>
+                ${flag(t.name, 22, 15, 'team-flag-img')}
+                <span class="team-cell-name">${t.name}</span>
+              </div>
+            </td>
+            <td>${t.played}</td>
+            <td>${t.w}</td>
+            <td>${t.d}</td>
+            <td>${t.l}</td>
+            <td>${t.gf}</td>
+            <td>${t.ga}</td>
+            <td style="font-weight:600;color:${t.gd>=0?'var(--grass)':'#EF4444'}">${gd}</td>
+            <td class="pts-cell">${t.pts}</td>
+            <td><span class="qual-badge ${qc}">${qualLabel(t.qual, t.pos)}</span></td>
+            <td>
+              <div class="prob-bar-wrap">
+                <div class="prob-bar"><div class="prob-bar-fill" style="width:${pctQual}%;background:${probColor(t.pq)}"></div></div>
+                <span class="prob-val">${pctQual}%</span>
+              </div>
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+function renderMatches(matches) {
+  return `
+  <div class="matches-card">
+    <div class="matches-card-header">
+      <span>Matchs</span>
+      <small>Prédit · Score · Probas</small>
+    </div>
+    ${matches.map(m => {
+      const hasResult = m.act_h !== null && m.act_a !== null;
+      const correct = hasResult && m.act_res === m.pred_res;
+      const phPct = Math.round(m.ph * 100);
+      const pdPct = Math.round(m.pd * 100);
+      const paPct = Math.round(m.pa * 100);
+      const scoreMain = hasResult
+        ? `<div class="score-actual">${m.act_h} – ${m.act_a}</div>`
+        : `<div class="score-actual" style="color:#A8A29E">${m.pred_h} – ${m.pred_a}</div>`;
+      const scoreLabel = hasResult
+        ? `<div class="score-pred ${correct?'correct':''}">Prédit: ${m.pred_h}–${m.pred_a} ${correct?'✓':''}</div>`
+        : `<div class="score-pred">Prédit</div>`;
+      return `
+      <div class="match-row">
+        <div class="match-date-col">${fmtDate(m.date)}</div>
+        <div class="match-home">${flag(m.home, 22, 15, 'team-flag-img')}<span>${m.home}</span></div>
+        <div class="match-score-block">
+          ${scoreMain}${scoreLabel}
+          <div class="match-proba">
+            <div class="mp-h" style="width:${phPct}%"></div>
+            <div class="mp-d" style="width:${pdPct}%"></div>
+            <div class="mp-a" style="width:${paPct}%"></div>
+          </div>
+        </div>
+        <div class="match-away">${flag(m.away, 22, 15, 'team-flag-img')}<span>${m.away}</span></div>
+        <div style="text-align:right;font-size:.7rem;color:#A8A29E;white-space:nowrap;line-height:1.6">
+          <span style="color:var(--grass)">${phPct}%</span>
+          <span style="color:var(--gold);margin:0 2px">${pdPct}%</span>
+          <span style="color:#EF4444">${paPct}%</span>
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function renderGroup(grpKey, grp) {
+  return `
+  <div class="group-block fade-in" data-group="${grpKey}" id="grp-${grpKey}">
+    <div class="group-header-row">
+      <div class="group-letter-tag">GROUPE ${grpKey}</div>
+      <div class="group-header-line"></div>
+    </div>
+    ${renderStandings(grp.teams)}
+    ${renderMatches(grp.matches)}
+  </div>`;
+}
+
+function renderBestThirds(best3) {
+  // On construit les 12 troisièmes depuis les groupes (déjà triés par le modèle)
+  // best3 peut contenir 8 ou 12 équipes selon le JSON ; on affiche tout, ligne de coupure après le 8e
+  return `
+  <div class="best3-section fade-in" id="best3-section">
+    <div class="section-title-row">
+      <div class="section-title">Classement des 3es</div>
+      <div class="section-sub">12 équipes · Les 8 premières sont qualifiées pour le tableau final</div>
+    </div>
+    <div class="best3-table-wrap">
+      <table class="best3-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Groupe</th>
+            <th style="text-align:left">Équipe</th>
+            <th>Pts</th>
+            <th>Diff</th>
+            <th>BP</th>
+            <th>FIFA</th>
+            <th>Prob. qual.</th>
+            <th>Statut</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${best3.map((t, i) => {
+            const qualified = i < 8;
+            const pct = Math.round((t.prob || 0) * 100);
+            const gd = (t.gd >= 0 ? '+' : '') + t.gd;
+            const cutoff = i === 8 ? '<tr class="cutoff-row"><td colspan="9"><span>── Éliminés ──</span></td></tr>' : '';
+            return cutoff + `<tr class="${qualified ? 'row-qualified' : 'row-out'}">
+              <td class="b3-rank">${t.rank || i+1}</td>
+              <td class="b3-group">Grp. ${t.group}</td>
+              <td class="b3-name-cell">${flag(t.name, 22, 15, 'team-flag-img')}<span>${t.name}</span></td>
+              <td class="b3-num">${t.pts}</td>
+              <td class="b3-num" style="color:${t.gd>=0?'var(--grass)':'#EF4444'}">${gd}</td>
+              <td class="b3-num">${t.gf}</td>
+              <td class="b3-num" style="color:#A8A29E">#${t.fifa_rank}</td>
+              <td class="b3-prob">
+                <div class="prob-bar-wrap">
+                  <div class="prob-bar"><div class="prob-bar-fill" style="width:${pct}%;background:${qualified?'var(--grass)':'#E7E5E4'}"></div></div>
+                  <span class="prob-val">${pct}%</span>
+                </div>
+              </td>
+              <td><span class="qual-badge ${qualified ? 'qual-3RD' : 'qual-OUT'}">${qualified ? '3e* ✓' : 'Élim.'}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:.75rem;color:#A8A29E;margin-top:.75rem;padding-left:.25rem">
+      * Le classement des 3es est déterminé par pts → diff. de buts → buts marqués → classement FIFA.
+      Les probabilités sont issues des simulations Monte Carlo (10 000 itérations).
+    </p>
+  </div>`;
+}
+
+
+async function init() {
+  const main = document.getElementById('mainContent');
+  let data;
+  try {
+    const res = await fetch('../data/groups.json');
+    if (!res.ok) throw new Error(res.status);
+    data = await res.json();
+  } catch(e) {
+    main.innerHTML = `<div class="loading" style="padding:3rem;text-align:center">
+      <p style="font-size:1.1rem;margin-bottom:.75rem">❌ Les données ne sont pas disponibles.</p>
+      <p style="color:#78716C;font-size:.88rem">Veuillez réessayer plus tard.</p>
+    </div>`;
+    return;
+  }
+
+  const groups = data.groups;
+  // Construire les 12 troisièmes depuis tous les groupes, triés règles FIFA
+  const allThirds = Object.entries(groups).map(([grpKey, grp]) => {
+    const t = grp.teams.find(t => t.pos === 3);
+    if (!t) return null;
+    return { ...t, group: grpKey };
+  }).filter(Boolean).sort((a, b) => {
+    if (b.pts !== a.pts)    return b.pts - a.pts;
+    if (b.gd !== a.gd)     return b.gd - a.gd;
+    if (b.gf !== a.gf)     return b.gf - a.gf;
+    return (a.rank || 999) - (b.rank || 999);
+  }).map((t, i) => ({ ...t, rank: i + 1, prob: t.pq || 0, fifa_rank: t.rank }));
+  const best3 = allThirds;
+  const grpKeys = Object.keys(groups).sort();
+
+  // Boutons filtre
+  const btnContainer = document.getElementById('groupFilterBtns');
+  grpKeys.forEach(k => {
+    const btn = document.createElement('button');
+    btn.className = 'filter-btn';
+    btn.textContent = k;
+    btn.dataset.grp = k;
+    btn.addEventListener('click', () => filterGroup(k));
+    btnContainer.appendChild(btn);
+  });
+
+  // Render
+  let html = '';
+  grpKeys.forEach(k => { html += renderGroup(k, groups[k]); });
+  if (best3.length) html += renderBestThirds(best3);
+  main.innerHTML = html;
+
+  // Scroll animations
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+  }, { threshold: 0.05 });
+  document.querySelectorAll('.fade-in').forEach(el => obs.observe(el));
+}
+
+function filterGroup(grp) {
+  // Toggle "ALL"
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  if (grp === 'ALL') {
+    document.querySelector('.all-btn').classList.add('active');
+    document.querySelectorAll('.group-block').forEach(el => el.style.display = '');
+    const s3 = document.getElementById('best3-section');
+    if (s3) s3.style.display = '';
+  } else {
+    document.querySelector(`[data-grp="${grp}"]`).classList.add('active');
+    document.querySelectorAll('.group-block').forEach(el => {
+      el.style.display = el.dataset.group === grp ? '' : 'none';
+    });
+    const s3 = document.getElementById('best3-section');
+    if (s3) s3.style.display = 'none';
+    // Scroll vers le groupe
+    const target = document.getElementById('grp-' + grp);
+    if (target) setTimeout(() => target.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+  }
+}
+
+// Bind "Tous"
+document.querySelector('.all-btn').addEventListener('click', () => filterGroup('ALL'));
+
+init();
+</script>
+</body>
+</html>

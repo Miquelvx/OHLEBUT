@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bracket — WC2026 Predictor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css_pages/css_bracket.css">
+
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="../index.html">OhLeBut ⚽</a>
+  <div class="nav-links">
+    <a href="../index.html">Accueil</a>
+    <a href="groups.html">Groupes</a>
+    <a href="bracket.html" class="active">Bracket</a>
+    <a href="model.html">Modèle</a>
+    <a href="data.html">Données</a>
+  </div>
+</nav>
+
+<div class="page-header">
+  <h1>Tableau <span>Final</span></h1>
+  <p>Phases éliminatoires · Prédictions Monte Carlo · 10 000 simulations</p>
+</div>
+
+<div class="legend">
+  <span class="legend-item"><span class="legend-dot dot-winner"></span>Vainqueur</span>
+  <span class="legend-item"><span class="prob-bar-legend"></span>Probabilité victoire</span>
+</div>
+
+<div class="bracket-scroll">
+  <div id="bracketCanvas" class="bracket-canvas"></div>
+</div>
+
+<section class="prob-section">
+  <div class="prob-title">Probabilités de titre</div>
+  <div class="prob-sub">Chances de remporter chaque tour · Simulations Monte Carlo</div>
+  <div class="prob-table-wrap">
+    <table class="prob-table" id="probTable">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Équipe</th>
+          <th>Grp.</th>
+          <th>R32</th>
+          <th>R16</th>
+          <th>1/4</th>
+          <th>1/2</th>
+          <th>🏆 Champion</th>
+        </tr>
+      </thead>
+      <tbody id="probBody"></tbody>
+    </table>
+  </div>
+</section>
+
+<script src="assets.js"></script>
+<script>
+// FLAGS, flag(), pct(), pctClass() → shared.js
+
+/* ── MATCH CARD ── */
+function matchCard(m, extraClass=''){
+  const played = m.team_a.score !== null && m.team_b.score !== null && m.winner;
+  const paW = Math.round((m.prob_a||0)*100);
+  const pbW = 100 - paW;
+  const aWins = played && m.winner && m.winner.id === m.team_a.id;
+  const bWins = played && m.winner && m.winner.id === m.team_b.id;
+
+  const rowA = played
+    ? `<div class="team-row ${aWins?'winner-row':'loser-row'}">
+        ${flag(m.team_a.name)}
+        <span class="team-name">${m.team_a.name}</span>
+        <span class="team-score">${m.team_a.score}</span>
+      </div>`
+    : `<div class="team-row pred-row">
+        ${flag(m.team_a.name)}
+        <span class="team-name">${m.team_a.name}</span>
+        <span class="pred-score">${paW}%</span>
+      </div>`;
+
+  const rowB = played
+    ? `<div class="team-row ${bWins?'winner-row':'loser-row'}">
+        ${flag(m.team_b.name)}
+        <span class="team-name">${m.team_b.name}</span>
+        <span class="team-score">${m.team_b.score}</span>
+      </div>`
+    : `<div class="team-row pred-row">
+        ${flag(m.team_b.name)}
+        <span class="team-name">${m.team_b.name}</span>
+        <span class="pred-score">${pbW}%</span>
+      </div>`;
+
+  return `
+  <div class="match-card ${played?'has-result':''} ${extraClass}">
+    <div class="match-id">${m.id}</div>
+    ${rowA}
+    ${rowB}
+    <div class="match-proba-bar">
+      <div class="mpb-a" style="width:${paW}%"></div>
+      <div class="mpb-b" style="width:${pbW}%"></div>
+    </div>
+  </div>`;
+}
+
+/* ── BRACKET LAYOUT ──
+   R16 : M1..M16  (16 matchs, 2 colonnes de 8 de chaque côté)
+   R8  : R8_1..R8_8
+   QF  : QF1..QF4
+   SF  : SF1, SF2
+   FIN : FIN  + 3RD
+   Disposition : [R16-left | R8-left | QF-left | SF1 | FINAL | SF2 | QF-right | R8-right | R16-right]
+*/
+
+// Ordre des matchs dans chaque colonne (gauche → droite)
+const R16_LEFT  = ['M1','M2','M3','M4','M5','M6','M7','M8'];
+const R16_RIGHT = ['M9','M10','M11','M12','M13','M14','M15','M16'];
+const R8_LEFT   = ['R8_1','R8_2','R8_3','R8_4'];
+const R8_RIGHT  = ['R8_5','R8_6','R8_7','R8_8'];
+const QF_LEFT   = ['QF1','QF2'];
+const QF_RIGHT  = ['QF3','QF4'];
+const SF_LEFT   = ['SF1'];
+const SF_RIGHT  = ['SF2'];
+
+function buildBracket(data){
+  const byId = {};
+  data.bracket.forEach(m => byId[m.id] = m);
+
+  const canvas = document.getElementById('bracketCanvas');
+
+  // Hauteur fixe d'un slot = CARD_H + padding de part et d'autre
+  // R16 : 8 matchs → slot = SLOT_H
+  // R8  : 4 matchs → slot = 2 × SLOT_H
+  // QF  : 2 matchs → slot = 4 × SLOT_H
+  // SF  : 1 match  → slot = 8 × SLOT_H
+  const CARD_H  = 80;   // hauteur de la card
+  const SLOT_H  = 90;   // hauteur d'un slot R16 (card + marges)
+  const N_R16   = 8;    // matchs par demi-bracket
+  const TOTAL_H = N_R16 * SLOT_H; // hauteur totale du bracket
+
+  function col(ids, label, isActiveRound=false){
+    const n = ids.length;
+    const slotH = TOTAL_H / n; // chaque slot occupe TOTAL_H / n px
+    const div = document.createElement('div');
+    div.className = 'col';
+    div.innerHTML = `<div class="col-header${isActiveRound?' active-round':''}">${label}</div>`;
+    const wrap = document.createElement('div');
+    wrap.className = 'matches-col';
+    wrap.style.cssText = `height:${TOTAL_H}px;display:flex;flex-direction:column;`;
+
+    ids.forEach(id => {
+      const m = byId[id];
+      if(!m){ return; }
+      const slot = document.createElement('div');
+      slot.className = 'match-slot';
+      slot.style.cssText = `height:${slotH}px;min-height:${slotH}px;display:flex;align-items:center;justify-content:center;`;
+      slot.innerHTML = matchCard(m);
+      wrap.appendChild(slot);
+    });
+
+    div.appendChild(wrap);
+    return div;
+  }
+
+  // Séparateur entre colonnes
+  function connector(w=20){
+    const div = document.createElement('div');
+    div.style.cssText = `width:${w}px;flex-shrink:0;`;
+    div.classList.add('conn-spacer');
+    return div;
+  }
+
+  // Colonne centrale : FINAL + 3RD
+  function centerCol(data){
+    const div = document.createElement('div');
+    div.className = 'col';
+    div.style.minWidth = '200px';
+    div.innerHTML = "";
+
+    const inner = document.createElement('div');
+    inner.style.cssText = `height:${TOTAL_H}px;display:flex;flex-direction:column;align-items:center;gap:1.5rem;justify-content:center;padding:1rem 0;width:100%`;
+
+    // Champion
+    const fin = byId['FIN'];
+    const third = byId['3RD'];
+
+    if(fin){
+      const champDiv = document.createElement('div');
+      champDiv.className = 'final-area';
+
+      const played = fin.team_a.score !== null && fin.winner;
+      const winner = fin.winner;
+
+      champDiv.innerHTML = `
+        <div class="final-label">🏆 FINALE</div>
+        <div class="match-card trophy-card has-result">
+          <div class="match-id">FINALE</div>
+          ${played ? `
+          <div class="team-row ${fin.winner.id===fin.team_a.id?'winner-row':'loser-row'}">
+            ${flag(fin.team_a.name)}<span class="team-name">${fin.team_a.name}</span>
+            <span class="team-score">${fin.team_a.score}</span>
+          </div>
+          <div class="team-row ${fin.winner.id===fin.team_b.id?'winner-row':'loser-row'}">
+            ${flag(fin.team_b.name)}<span class="team-name">${fin.team_b.name}</span>
+            <span class="team-score">${fin.team_b.score}</span>
+          </div>
+          ` : `
+          <div class="team-row pred-row">${flag(fin.team_a.name)}<span class="team-name">${fin.team_a.name}</span><span class="pred-score">${Math.round(fin.prob_a*100)}%</span></div>
+          <div class="team-row pred-row">${flag(fin.team_b.name)}<span class="team-name">${fin.team_b.name}</span><span class="pred-score">${Math.round(fin.prob_b*100)}%</span></div>
+          `}
+          <div class="match-proba-bar"><div class="mpb-a" style="width:${Math.round(fin.prob_a*100)}%"></div><div class="mpb-b" style="width:${Math.round(fin.prob_b*100)}%"></div></div>
+        </div>
+        ${winner ? `
+        <div class="champion-banner">
+          <div class="champ-label">🥇 Champion du Monde</div>
+          <img class="champ-flag" src="https://flagcdn.com/w80/${FLAGS[winner.name]||'un'}.png" alt="${winner.name}">
+          <div class="champ-name">${winner.name}</div>
+        </div>` : ''}
+      `;
+      inner.appendChild(champDiv);
+    }
+
+    if(third){
+      const t3div = document.createElement('div');
+      t3div.className = 'final-area';
+      const played3 = third.team_a.score !== null && third.winner;
+      t3div.innerHTML = `
+        <div class="final-label" style="color:var(--sun)">🥉 3e PLACE</div>
+        <div class="match-card third-card ${played3?'has-result':''}">
+          <div class="match-id">3e Place</div>
+          ${played3 ? `
+          <div class="team-row ${third.winner.id===third.team_a.id?'winner-row':'loser-row'}">
+            ${flag(third.team_a.name)}<span class="team-name">${third.team_a.name}</span>
+            <span class="team-score">${third.team_a.score}</span>
+          </div>
+          <div class="team-row ${third.winner.id===third.team_b.id?'winner-row':'loser-row'}">
+            ${flag(third.team_b.name)}<span class="team-name">${third.team_b.name}</span>
+            <span class="team-score">${third.team_b.score}</span>
+          </div>
+          ` : `
+          <div class="team-row pred-row">${flag(third.team_a.name)}<span class="team-name">${third.team_a.name}</span><span class="pred-score">${Math.round(third.prob_a*100)}%</span></div>
+          <div class="team-row pred-row">${flag(third.team_b.name)}<span class="team-name">${third.team_b.name}</span><span class="pred-score">${Math.round(third.prob_b*100)}%</span></div>
+          `}
+          <div class="match-proba-bar"><div class="mpb-a" style="width:${Math.round(third.prob_a*100)}%"></div><div class="mpb-b" style="width:${Math.round(third.prob_b*100)}%"></div></div>
+        </div>
+      `;
+      inner.appendChild(t3div);
+    }
+
+    div.appendChild(inner);
+    return div;
+  }
+
+  // Assembler : gauche → centre → droite
+  canvas.appendChild(col(R16_LEFT,  '1/16 de finale'));
+  canvas.appendChild(connector(16));
+  canvas.appendChild(col(R8_LEFT,   '1/8 de finale'));
+  canvas.appendChild(connector(16));
+  canvas.appendChild(col(QF_LEFT,   'Quart de finale'));
+  canvas.appendChild(connector(16));
+  canvas.appendChild(col(SF_LEFT,   'Demi-finale'));
+  canvas.appendChild(connector(12));
+  canvas.appendChild(centerCol(data));
+  canvas.appendChild(connector(12));
+  canvas.appendChild(col(SF_RIGHT,  'Demi-finale'));
+  canvas.appendChild(connector(16));
+  canvas.appendChild(col(QF_RIGHT,  'Quart de finale'));
+  canvas.appendChild(connector(16));
+  canvas.appendChild(col(R8_RIGHT,  '1/8 de finale'));
+  canvas.appendChild(connector(16));
+  canvas.appendChild(col(R16_RIGHT, '1/16 de finale'));
+}
+
+/* ── PROB TABLE ── */
+function buildProbTable(data){
+  const probs = data.probabilities.slice(0,20); // top 20
+  const tbody = document.getElementById('probBody');
+  tbody.innerHTML = probs.map((t,i) => `
+    <tr>
+      <td class="rank-num">${i+1}</td>
+      <td><div class="pname-cell">${flag(t.name,22,14)}<span>${t.name}</span></div></td>
+      <td style="color:#A8A29E;font-size:.72rem;font-weight:600">Grp.${t.group}</td>
+      <td class="pct-cell ${pctClass(t.r16)}">${pct(t.r16)}</td>
+      <td class="pct-cell ${pctClass(t.r8)}">${pct(t.r8)}</td>
+      <td class="pct-cell ${pctClass(t.qf)}">${pct(t.qf)}</td>
+      <td class="pct-cell ${pctClass(t.sf)}">${pct(t.sf)}</td>
+      <td>
+        <span class="pct-cell ${pctClass(t.champ)}" style="font-size:.85rem">${pct(t.champ)}</span>
+        <span class="mini-bar" style="width:${Math.round(t.champ*300)}px;max-width:60px"></span>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function init(){
+  let data;
+  try{
+    const res = await fetch('../data/bracket.json');
+    if(!res.ok) throw new Error(res.status);
+    data = await res.json();
+  } catch(e){
+    document.getElementById('bracketCanvas').innerHTML = `
+      <div style="padding:3rem;color:#A8A29E;font-size:.9rem;text-align:center;width:100%">
+        ❌ Les données ne sont pas disponibles.<br>
+        Veuillez réessayer plus tard.
+      </div>`;
+    return;
+  }
+  buildBracket(data);
+  buildProbTable(data);
+}
+
+init();
+</script>
+</body>
+</html>
