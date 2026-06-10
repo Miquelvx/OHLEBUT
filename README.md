@@ -35,9 +35,10 @@ Le projet s'exécute via une série de scripts séquentiels :
 4. clean_database.py        → Nettoyage des données
 5. build_features.py        → Construction des features ML
 6. load_fifa_ranking.py     → Chargement des classements FIFA officiels
-7. predict_groups.py        → Prédictions de la phase de groupes
-8. predict_knockout.py      → Prédictions du tableau final
-9. export_json.py           → Export des JSON pour le frontend
+7. train_model.py           → Entraînement du modèle XGBoost
+8. predict_groups.py        → Prédictions de la phase de groupes
+9. predict_knockout.py      → Prédictions du tableau final
+10. export_json.py           → Export des JSON pour le frontend
 ```
 
 ## Structure du projet
@@ -61,7 +62,8 @@ OhLeBut/                          # Répertoire racine du projet
 │   ├── predict_groups.py         # Prédictions phase de groupes
 │   ├── predict_knockout.py       # Prédictions tableau final
 │   ├── export_json.py            # Export JSON pour le site
-│   └── team_utils.py             # Utilitaires normalisation des noms d'équipes
+│   ├── team_utils.py             # Utilitaires normalisation des noms d'équipes
+│   └── train_model.py            # Entraînement du modèle
 ├── pages/                        # Site statique GitHub Pages
 │   ├── assets.js                 # Constantes JavaScript
 │   ├── groups.html               # Phase de groupes

@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../css_pages/css_bracket.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
 
 </head>
 <body>
@@ -39,6 +40,23 @@
 <section class="prob-section">
   <div class="prob-title">Probabilités de titre</div>
   <div class="prob-sub">Chances de remporter chaque tour · Simulations Monte Carlo</div>
+  <div style="
+    display:flex;gap:.6rem;align-items:flex-start;
+    background:#FFF8ED;border:1px solid rgba(249,115,22,.2);border-left:3px solid var(--sun);
+    border-radius:10px;padding:.8rem 1rem;margin-bottom:1rem;max-width:860px
+  ">
+    <span style="font-size:1rem;flex-shrink:0;margin-top:.05rem">⚠️</span>
+    <p style="font-size:.78rem;color:#78716C;line-height:1.6;margin:0">
+      <strong style="color:var(--dark)">Simulation conditionnelle au bracket actuel.</strong> <br>
+      Ces probabilités sont calculées sur 10 000 simulations des phases éliminatoires
+      en partant des rencontres <em>telles qu'elles sont fixées dans ce tableau</em> —
+      c'est-à-dire avec les affrontements du 16<sup>e</sup> de finale déjà déterminés.
+      Le modèle ne simule pas la phase de groupes pour redistribuer les qualifiés :
+      les adversaires de chaque équipe sont ceux assignés dans ce bracket précis.
+      Les probabilités reflètent donc un scénario conditionnel, et non une estimation
+      de toutes les issues de groupes confondues.
+    </p>
+  </div>
   <div class="prob-table-wrap">
     <table class="prob-table" id="probTable">
       <thead>

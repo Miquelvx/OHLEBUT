@@ -64,6 +64,10 @@ def export_predictions(conn, metrics):
     """)
     stages = [{"stage":r[0],"total":r[1],"played":r[2]} for r in c.fetchall()]
 
+    # Liste des dates de tous les matchs (pour calcul de progression côté client)
+    c.execute("SELECT match_date FROM wc2026_fixtures ORDER BY match_date")
+    match_dates = [r[0][:10] for r in c.fetchall() if r[0]]
+
     return {
         "generated_at": datetime.now().isoformat(),
         "model": {
@@ -85,10 +89,11 @@ def export_predictions(conn, metrics):
         },
         "teams": teams,
         "progress": {
-            "played":  played,
-            "total":   total,
-            "pct":     round(played/total*100, 1) if total > 0 else 0,
-            "stages":  stages,
+            "played":      played,
+            "total":       total,
+            "pct":         round(played/total*100, 1) if total > 0 else 0,
+            "stages":      stages,
+            "match_dates": match_dates,  # ← dates réelles de tous les matchs
         },
     }
 
@@ -172,7 +177,6 @@ def export_groups(conn):
                 "pd":      safe_float(m["pred_proba_draw"],3),
                 "pa":      safe_float(m["pred_proba_away"],3),
             }
-            # score_freq si disponible
             if has_score_freq:
                 match["score_freq"] = safe_float(m.get("pred_score_freq"), 1)
             matches.append(match)
@@ -196,65 +200,93 @@ def export_groups(conn):
 # ══════════════════════════════════════════════════════════════════
 
 def export_bracket(conn):
-    fixtures = pd.read_sql_query("""
-        SELECT match_id, round,
-               team_a_id, team_a_name, team_b_id, team_b_name,
-               pred_score_a, pred_score_b,
-               prob_a_wins, prob_b_wins, score_freq,
-               winner_id, winner_name
-        FROM knockout_fixtures ORDER BY match_id
-    """, conn)
+    c = conn.cursor()
+    c.execute("PRAGMA table_info(wc2026_fixtures)")
+    cols = {r[1] for r in c.fetchall()}
 
-    try:
-        probs = pd.read_sql_query("""
-            SELECT kp.team_id, kp.team_name, kp.group_name, kp.fifa_ranking,
-                   kp.prob_r16, kp.prob_r8, kp.prob_qf, kp.prob_sf,
-                   kp.prob_final, kp.prob_champion,
-                   COALESCE(kp.prob_qualify, gs.prob_qualify) as prob_qualify
-            FROM knockout_probabilities kp
-            LEFT JOIN group_standings gs USING(team_id)
-            ORDER BY kp.prob_champion DESC
-        """, conn)
-    except Exception:
-        probs = pd.read_sql_query("""
-            SELECT kp.team_id, kp.team_name, kp.group_name, kp.fifa_ranking,
-                   kp.prob_r16, kp.prob_r8, kp.prob_qf, kp.prob_sf,
-                   kp.prob_final, kp.prob_champion,
-                   gs.prob_qualify
-            FROM knockout_probabilities kp
-            LEFT JOIN group_standings gs USING(team_id)
-            ORDER BY kp.prob_champion DESC
-        """, conn)
+    extra_cols = ""
+    if "prob_win_a" in cols:
+        extra_cols = ", prob_win_a, prob_win_b"
 
-    bracket = [
-        {"id":m["match_id"],"round":m["round"],
-         "team_a":{"id":safe_int(m["team_a_id"]),"name":m["team_a_name"],
-                   "score":safe_int(m["pred_score_a"])},
-         "team_b":{"id":safe_int(m["team_b_id"]),"name":m["team_b_name"],
-                   "score":safe_int(m["pred_score_b"])},
-         "prob_a":     safe_float(m["prob_a_wins"],3),
-         "prob_b":     safe_float(m["prob_b_wins"],3),
-         "score_freq": safe_float(m["score_freq"],1),
-         "winner":{"id":safe_int(m["winner_id"]),"name":m["winner_name"]}}
-        for _, m in fixtures.iterrows()
-    ]
+    c.execute(f"""
+        SELECT fixture_id, stage, match_date,
+               home_team_id, away_team_id,
+               home_team_label, away_team_label,
+               pred_proba_home, pred_proba_draw, pred_proba_away,
+               pred_home_goals, pred_away_goals, pred_result,
+               actual_home_goals, actual_away_goals, actual_result,
+               pred_winner_id
+               {extra_cols}
+        FROM wc2026_fixtures
+        WHERE stage != 'GROUP_STAGE'
+        ORDER BY match_date
+    """)
+    rows = c.fetchall()
+    col_names = [d[0] for d in c.description]
 
-    probabilities = [
-        {"id":    safe_int(r["team_id"]),
-         "name":  r["team_name"],
-         "group": r["group_name"],
-         "rank":  safe_int(r["fifa_ranking"]),
-         "pq":    safe_float(r["prob_qualify"],3),
-         "r16":   safe_float(r["prob_r16"],3),
-         "r8":    safe_float(r["prob_r8"],3),
-         "qf":    safe_float(r["prob_qf"],3),
-         "sf":    safe_float(r["prob_sf"],3),
-         "fin":   safe_float(r["prob_final"],3),
-         "champ": safe_float(r["prob_champion"],3)}
-        for _, r in probs.iterrows()
-    ]
+    bracket = []
+    for row in rows:
+        m = dict(zip(col_names, row))
 
-    return {"bracket":bracket,"probabilities":probabilities}
+        # Déterminer le vainqueur affiché
+        winner_id = m.get("pred_winner_id")
+        if m.get("actual_result") == "H":
+            winner_id = m["home_team_id"]
+        elif m.get("actual_result") == "A":
+            winner_id = m["away_team_id"]
+
+        # Prob de victoire côté knockout (sans nul)
+        prob_a = safe_float(m.get("prob_win_a") or m.get("pred_proba_home"), 3)
+        prob_b = safe_float(m.get("prob_win_b") or m.get("pred_proba_away"), 3)
+        if prob_a and prob_b:
+            s = prob_a + prob_b
+            if s > 0:
+                prob_a = round(prob_a / s, 3)
+                prob_b = round(prob_b / s, 3)
+
+        bracket.append({
+            "id":      m["fixture_id"],
+            "stage":   m["stage"],
+            "date":    m["match_date"],
+            "team_a":  {
+                "id":    m["home_team_id"],
+                "name":  m["home_team_label"] or "TBD",
+                "score": safe_int(m["actual_home_goals"]),
+            },
+            "team_b":  {
+                "id":    m["away_team_id"],
+                "name":  m["away_team_label"] or "TBD",
+                "score": safe_int(m["actual_away_goals"]),
+            },
+            "prob_a":  prob_a,
+            "prob_b":  prob_b,
+            "winner":  {"id": winner_id} if winner_id else None,
+        })
+
+    # Probabilités globales de titre (depuis bracket_results si elle existe)
+    title_probs = []
+    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bracket_results'")
+    if c.fetchone():
+        c.execute("""
+            SELECT team_id, team_label, fifa_ranking,
+                   prob_r32, prob_r16, prob_qf, prob_sf, prob_final, prob_champion
+            FROM bracket_results
+            ORDER BY prob_champion DESC
+        """)
+        for r in c.fetchall():
+            title_probs.append({
+                "id":           r[0],
+                "name":         r[1],
+                "rank":         safe_int(r[2]),
+                "prob_r32":     safe_float(r[3], 3),
+                "prob_r16":     safe_float(r[4], 3),
+                "prob_qf":      safe_float(r[5], 3),
+                "prob_sf":      safe_float(r[6], 3),
+                "prob_final":   safe_float(r[7], 3),
+                "prob_champion":safe_float(r[8], 3),
+            })
+
+    return {"bracket": bracket, "title_probs": title_probs}
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -262,34 +294,47 @@ def export_bracket(conn):
 # ══════════════════════════════════════════════════════════════════
 
 def export_training(conn):
-    matches = pd.read_sql_query("""
-        SELECT m.match_date, m.competition, m.season, m.stage,
-               m.neutral_venue,
-               th.team_name as home_team, ta.team_name as away_team,
-               m.home_goals, m.away_goals, m.result_90
+    df = pd.read_sql_query("""
+        SELECT m.match_date as date,
+               m.competition, m.stage, m.season,
+               th.canonical_name as home, ta.canonical_name as away,
+               m.home_goals, m.away_goals, m.result
         FROM matches m
-        JOIN teams th ON th.team_id = m.home_team_id
-        JOIN teams ta ON ta.team_id = m.away_team_id
+        LEFT JOIN teams th ON th.team_id = m.home_team_id
+        LEFT JOIN teams ta ON ta.team_id = m.away_team_id
         ORDER BY m.match_date DESC
     """, conn)
 
-    comp_dist = (matches.groupby("competition").size()
-                 .reset_index(name="count")
-                 .sort_values("count", ascending=False))
+    by_comp = df.groupby("competition").agg(
+        count=("result","count"),
+        seasons=("season", lambda x: sorted(x.dropna().unique().tolist()))
+    ).reset_index()
+
+    result_dist = df["result"].value_counts().to_dict()
+
+    matches = []
+    for _, r in df.iterrows():
+        matches.append({
+            "date":        r["date"],
+            "competition": r["competition"],
+            "stage":       r["stage"],
+            "season":      r["season"],
+            "home":        r["home"],
+            "away":        r["away"],
+            "home_goals":  safe_int(r["home_goals"]),
+            "away_goals":  safe_int(r["away_goals"]),
+            "result":      r["result"],
+        })
 
     return {
-        "total": len(matches),
-        "matches": [
-            {"date":r["match_date"],"competition":r["competition"],
-             "season":r["season"] or "","stage":r["stage"] or "",
-             "home":r["home_team"],"away":r["away_team"],
-             "home_goals":safe_int(r["home_goals"]),
-             "away_goals":safe_int(r["away_goals"]),
-             "result":r["result_90"],"neutral":bool(r["neutral_venue"])}
-            for _, r in matches.iterrows()
+        "matches":      matches,
+        "by_competition": [
+            {"competition": r["competition"],
+             "count":       int(r["count"]),
+             "seasons":     r["seasons"]}
+            for _, r in by_comp.iterrows()
         ],
-        "by_competition": comp_dist.to_dict(orient="records"),
-        "result_dist":    matches["result_90"].value_counts().to_dict(),
+        "result_dist": {k: int(v) for k, v in result_dist.items()},
     }
 
 
@@ -299,82 +344,37 @@ def export_training(conn):
 
 def export_model(conn, metrics, features_meta):
     c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM matches")
-    nb = c.fetchone()[0]
-    c.execute("SELECT MIN(match_date), MAX(match_date) FROM matches")
-    d_min, d_max = c.fetchone()
 
-    features = features_meta.get("features", [])
-    fi_raw   = features_meta.get("feature_importance", [])
+    # Walk-forward validation windows
+    wf_windows = metrics.get("walk_forward_windows", [])
 
-    FEATURE_LABELS = {
-        "ranking_gap":           "Écart de ranking FIFA",
-        "ranking_gap_adj":       "Écart de ranking ajusté (confédération)",
-        "home_rank_adj":         "Ranking ajusté domicile",
-        "away_rank_adj":         "Ranking ajusté extérieur",
-        "home_top20_ratio":      "Ratio matchs vs top 20 domicile",
-        "away_top20_ratio":      "Ratio matchs vs top 20 extérieur",
-        "home_fifa_ranking":     "Ranking FIFA domicile",
-        "away_fifa_ranking":     "Ranking FIFA extérieur",
-        "home_form5_pts":        "Points domicile (5 matchs)",
-        "home_form5_scored":     "Buts marqués domicile (5 matchs)",
-        "home_form5_conceded":   "Buts encaissés domicile (5 matchs)",
-        "home_form10_pts":       "Points domicile (10 matchs)",
-        "home_form10_scored":    "Buts marqués domicile (10 matchs)",
-        "home_form10_conceded":  "Buts encaissés domicile (10 matchs)",
-        "away_form5_pts":        "Points extérieur (5 matchs)",
-        "away_form5_scored":     "Buts marqués extérieur (5 matchs)",
-        "away_form5_conceded":   "Buts encaissés extérieur (5 matchs)",
-        "away_form10_pts":       "Points extérieur (10 matchs)",
-        "away_form10_scored":    "Buts marqués extérieur (10 matchs)",
-        "away_form10_conceded":  "Buts encaissés extérieur (10 matchs)",
-        "h2h_home_wins":         "% victoires domicile H2H",
-        "h2h_draws":             "% nuls H2H",
-        "h2h_away_wins":         "% victoires extérieur H2H",
-        "h2h_home_goals_avg":    "Buts domicile H2H (moyenne)",
-        "h2h_away_goals_avg":    "Buts extérieur H2H (moyenne)",
-        "h2h_matches":           "Nombre de matchs H2H",
-        "neutral_venue":         "Terrain neutre",
-        "competition_weight":    "Importance de la compétition",
-        "is_knockout":           "Phase éliminatoire",
-    }
-
-    feature_importance = [
-        {"feature":    fi["feature"],
-         "importance": safe_float(fi["importance"], 4),
-         "label":      FEATURE_LABELS.get(fi["feature"], fi["feature"])}
-        for fi in sorted(fi_raw, key=lambda x: x["importance"], reverse=True)
-    ]
+    # Feature importance
+    feature_importance = features_meta.get("feature_importance", [])
 
     return {
-        "summary": {
-            "algorithm":        "XGBoost + calibration isotonique",
-            "nb_matches":       nb,
-            "period":           f"{d_min} → {d_max}",
-            "accuracy":         metrics.get("accuracy"),
-            "baseline_accuracy":metrics.get("baseline_accuracy"),
-            "log_loss":         metrics.get("log_loss"),
-            "baseline_log_loss":metrics.get("baseline_log_loss"),
-            "mae_home":         metrics.get("mae_home"),
-            "mae_away":         metrics.get("mae_away"),
-            "nb_simulations":   10000,
-            "nb_features":      len(features),
+        "metrics": {
+            "accuracy":          metrics.get("accuracy"),
+            "baseline_accuracy": metrics.get("baseline_accuracy"),
+            "log_loss":          metrics.get("log_loss"),
+            "brier_score":       metrics.get("brier_score"),
+            "nb_train_matches":  metrics.get("nb_train_matches"),
+            "calibration_method":metrics.get("calibration_method", "isotonic"),
         },
+        "walk_forward": wf_windows,
         "feature_importance": feature_importance,
-        "features": [
-            {"category":"Classement FIFA","count":2,
-             "description":"Ranking FIFA domicile/extérieur."},
-            {"category":"Classement ajusté","count":3,
-             "description":"Ranking FIFA + pénalité confédération. Iran #21 AFC → #41 effectif."},
-            {"category":"Expérience élite","count":2,
-             "description":"Ratio de matchs joués contre le top 20 ajusté sur les 20 derniers matchs."},
-            {"category":"Forme récente","count":12,
-             "description":"Points, buts marqués/encaissés sur 5 et 10 derniers matchs. Pondérés par confédération et récence."},
-            {"category":"Head-to-head","count":6,
-             "description":"Historique des 5 dernières confrontations directes."},
-            {"category":"Contexte","count":3,
-             "description":"Terrain neutre, poids de la compétition (CdM=1.0 → amicaux=0.3), phase éliminatoire."},
-        ],
+        "features_meta": {
+            "total":      len(features_meta.get("features", [])),
+            "categories": [
+                {"category":"Classement FIFA","count":3,
+                 "description":"Ranking home/away et écart normalisé. Source : publications officielles FIFA."},
+                {"category":"Forme récente","count":12,
+                 "description":"Points, buts marqués/encaissés sur 5 et 10 derniers matchs. Pondérés par confédération et récence."},
+                {"category":"Head-to-head","count":6,
+                 "description":"Historique des 5 dernières confrontations directes."},
+                {"category":"Contexte","count":3,
+                 "description":"Terrain neutre, poids de la compétition (CdM=1.0 → amicaux=0.3), phase éliminatoire."},
+            ],
+        },
         "data_sources": [
             {"name":"FIFA World Cup 2022",             "type":"Tournoi"},
             {"name":"Qualifications CdM 2026",         "type":"Qualifications"},

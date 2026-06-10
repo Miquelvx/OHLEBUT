@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="./css_pages/css_index.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
 
 </head>
 <body>
@@ -97,8 +98,7 @@
     <div class="section-sub">Classées par ranking FIFA.</div>
   </div>
   <div id="teamsContainer">
-    <div style="color:#A8A29E;padding:2rem;">Les données ne sont pas encore disponibles.
-    </div>
+    <div style="color:#A8A29E;padding:2rem;">Les données ne sont pas encore disponibles.</div>
   </div>
 </section>
 
@@ -125,13 +125,26 @@ async function loadData() {
 }
 
 function renderTracker(progress) {
+  const total = progress.total || 104;
+
+  // Calcul côté client : compter les matchs dont la date est passée
+  const dates = progress.match_dates || [];
+  const today = new Date();
+  today.setHours(23, 59, 59, 0); // on considère le jour entier comme joué
+  const playedByDate = dates.filter(d => new Date(d) <= today).length;
+
+  // On prend le max entre les vrais résultats en DB et le calcul par date
+  // (si le pipeline est re-tourné pendant la CDM, la DB prime)
+  const played = Math.max(progress.played || 0, playedByDate);
+  const pct    = total > 0 ? Math.round(played / total * 100) : 0;
+
   // Compteur
   document.getElementById('matchCount').innerHTML =
-    `${progress.played} <span>/ ${progress.total} matchs joués</span>`;
+    `${played} <span>/ ${total} matchs joués</span>`;
 
   // Barre
   setTimeout(() => {
-    document.getElementById('progressFill').style.width = progress.pct + '%';
+    document.getElementById('progressFill').style.width = pct + '%';
   }, 300);
 }
 
@@ -149,7 +162,6 @@ function renderTrainCount(nb) {
   }
 }
 
-// Map code pays → code flagcdn
 // FLAG_CODES, CONF_SHORT → shared.js
 function rankClass(r) {
   if (!r) return '';
@@ -186,6 +198,7 @@ function renderGroups(teams) {
 
   container.appendChild(tbl);
 }
+
 // Scroll animations
 const observer = new IntersectionObserver(entries => {
   entries.forEach(e => {

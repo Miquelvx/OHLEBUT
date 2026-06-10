@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../css_pages/css_data.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
 
 </head>
 <body>
@@ -43,7 +44,7 @@
 
   <!-- FILTRES + TABLE -->
   <div class="section-title">Explorer les matchs</div>
-  <div class="section-sub">2 537 matchs d'entraînement · filtrables par compétition, équipe, résultat</div>
+  <div class="section-sub" id="exploreSubtitle">— matchs d'entraînement · filtrables par compétition, équipe, résultat</div>
 
   <div class="filters-bar">
     <div class="filter-group">
@@ -147,6 +148,8 @@ function buildStats(matches, byComp, resultDist){
       <div class="stat-num">${c.num}</div>
       <div class="stat-label">${c.label}</div>
     </div>`).join('');
+  document.getElementById('exploreSubtitle').textContent =
+    `${matches.length.toLocaleString('fr-FR')} matchs d'entraînement · filtrables par compétition, équipe, résultat`;
 }
 
 /* ──────────────────────────────────────

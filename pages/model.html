@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../css_pages/css_model.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
 
 </head>
 <body>
@@ -66,7 +67,7 @@
       <div class="step-number" style="color:var(--gold)">④</div>
       <div class="step-name">Features</div>
       <div class="step-file">build_features.py</div>
-      <div class="step-desc">Calcul des 29 features</div>
+      <div class="step-desc">Calcul des 24 features</div>
     </div>
     <div class="pipeline-arrow">→</div>
 
@@ -177,17 +178,9 @@
 ══════════════════════════════════ -->
 <div class="section">
   <div class="section-title">Features du Modèle</div>
-  <div class="section-sub">29 variables d'entrée calculées pour chaque match</div>
+  <div class="section-sub">24 variables d'entrée calculées pour chaque match</div>
 
   <div class="features-grid">
-
-    <div class="feature-group">
-      <div class="feature-group-header">🏆 Classement FIFA</div>
-      <div class="feature-item"><span class="feat-name">home/away_fifa_ranking</span><span class="feat-desc">Classement FIFA brut de chaque équipe</span></div>
-      <div class="feature-item"><span class="feat-name">ranking_gap</span><span class="feat-desc">Écart brut de classement (away - home)</span></div>
-      <div class="feature-item"><span class="feat-name">home/away_rank_adj</span><span class="feat-desc">Ranking individuel ajusté par confédération</span></div>
-      <div class="feature-item"><span class="feat-name">ranking_gap_adj</span><span class="feat-desc">Écart corrigé par les pénalités de confédération</span></div>
-    </div>
 
     <div class="feature-group">
       <div class="feature-group-header">📈 Forme Récente</div>
@@ -206,8 +199,13 @@
     </div>
 
     <div class="feature-group">
+      <div class="feature-group-header">🏆 Classement FIFA</div>
+      <div class="feature-item"><span class="feat-name">home/away_fifa_ranking</span><span class="feat-desc">Classement FIFA brut de chaque équipe</span></div>
+      <div class="feature-item"><span class="feat-name">ranking_gap</span><span class="feat-desc">Écart brut de classement (away - home)</span></div>
+    </div>
+
+    <div class="feature-group">
       <div class="feature-group-header">🌟 Expérience & Contexte</div>
-      <div class="feature-item"><span class="feat-name">home/away_top20_ratio</span><span class="feat-desc">Part des 20 derniers matchs contre le top 20 mondial</span></div>
       <div class="feature-item"><span class="feat-name">neutral_venue</span><span class="feat-desc">Match sur terrain neutre (1) ou non (0)</span></div>
       <div class="feature-item"><span class="feat-name">competition_weight</span><span class="feat-desc">Importance de la compétition (CdM=1.0, Euro=0.8, amicaux=0.3…)</span></div>
       <div class="feature-item"><span class="feat-name">is_knockout</span><span class="feat-desc">Phase éliminatoire (1) vs phase de groupes (0)</span></div>
@@ -269,6 +267,36 @@
   <div class="section-title">Importance des Features</div>
   <div class="section-sub">Contribution de chaque variable aux prédictions du classificateur XGBoost</div>
   <div id="fiChart" style="max-width:700px"></div>
+  <div style="margin-top:1.25rem;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:.75rem">
+
+    <div style="background:#F5F3EE;border-radius:12px;padding:1rem 1.25rem;border-left:3px solid #6366F1">
+      <div style="font-size:.7rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#6366F1;margin-bottom:.4rem">🏆 Classement FIFA</div>
+      <p style="font-size:.78rem;color:#78716C;line-height:1.55;margin:0">
+        L'<strong>écart de ranking FIFA</strong> (12.2%) domine largement — c'est la variable la plus prédictive. Le modèle s'appuie en priorité sur la hiérarchie mondiale établie.
+      </p>
+    </div>
+
+    <div style="background:#F5F3EE;border-radius:12px;padding:1rem 1.25rem;border-left:3px solid #06B6D4">
+      <div style="font-size:.7rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#06B6D4;margin-bottom:.4rem">⚔️ Head-to-Head</div>
+      <p style="font-size:.78rem;color:#78716C;line-height:1.55;margin:0">
+        Les confrontations directes (% victoires, buts moyens) pèsent collectivement ~15%. L'historique entre deux équipes apporte une information que le ranking seul ne capture pas.
+      </p>
+    </div>
+
+    <div style="background:#F5F3EE;border-radius:12px;padding:1rem 1.25rem;border-left:3px solid #F97316">
+      <div style="font-size:.7rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#F97316;margin-bottom:.4rem">📈 Forme récente</div>
+      <p style="font-size:.78rem;color:#78716C;line-height:1.55;margin:0">
+        Les features de forme sont très nombreuses mais chacune pèse ~3.7–4.1%. Leur contribution cumulée est importante.
+    </div>
+
+    <div style="background:#F5F3EE;border-radius:12px;padding:1rem 1.25rem;border-left:3px solid #16A34A">
+      <div style="font-size:.7rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#16A34A;margin-bottom:.4rem">🎯 Contexte</div>
+      <p style="font-size:.78rem;color:#78716C;line-height:1.55;margin:0">
+        L'importance de la compétition (4.2%) et la phase éliminatoire (3.8%) ont un effet notable. Les équipes se comportent différemment en CdM qu'en amical, et différemment en phase à élimination directe qu'en groupe.
+      </p>
+    </div>
+
+  </div>
 </div>
 
 <!-- ══════════════════════════════════
@@ -378,15 +406,15 @@ const STEPS = [
   {
     num:'④', color:'#FBBF24',
     title:'④ build_features.py — Feature Engineering',
-    desc:`Calcule les 29 features pour chaque match et les stocke dans <code>match_features</code> :`,
+    desc:`Calcule les 24 features pour chaque match et les stocke dans <code>match_features</code> :`,
     points:[
       '<strong>Forme pondérée</strong> : pts moyens sur 5 et 10 matchs, pondérés par la qualité de l\'adversaire (confédération + ranking)',
-      '<strong>Ranking ajusté</strong> : ranking FIFA + pénalité confédération pour corriger les biais inter-confédérations',
+      '<strong>Ranking FIFA</strong> : Scrapping FIFA rankings via le site officiel',
       '<strong>Head to Head intelligent</strong> : si pas d\'historique, imputation par une probabilité déduite du ranking gap via une fonction sigmoid calibrée',
-      '<strong>top20_ratio</strong> : proportion des 20 derniers matchs contre le top 20 mondial ajusté — mesure l\'expérience des grandes compétitions',
+      '<strong>Poids competition</strong> : Ajustement du poids des compétitions, Coupe du Monde plus important que des matchs amicaux',
     ],
     note:'Toutes les features sont calculées <em>strictement avant</em> la date du match pour éviter tout leakage. L\'imputation (médiane) est calculée sur le train uniquement.',
-    outputs:['match_features (table, 29 colonnes)'],
+    outputs:['match_features (table, 24 colonnes)'],
     outputType:'db',
     cmd:'python build_features.py',
   },
