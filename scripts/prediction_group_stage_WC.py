@@ -1,14 +1,3 @@
-"""
-Pipeline 1 — Prédiction phases de groupe CdM 2026
-
-Corrections appliquées :
-  - Chargement du modèle calibré (classifier_calibrated.pkl)
-  - h2h_matches ajouté aux features
-  - sim_score() O(1) sans boucle de rejection
-  - Ordre des classes lu depuis le modèle, pas depuis features.json
-  - avg_stats supprimé (non utilisé) pour clarté
-"""
-
 import os, sys, json, pickle
 import numpy as np
 import pandas as pd
@@ -20,25 +9,15 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "../collect"))
 from init_db import get_connection
 
 _script_dir = os.path.dirname(os.path.abspath(__file__))
-MODELS_DIR  = os.path.join(_script_dir, "models/")
+MODELS_DIR  = os.path.join(_script_dir, "../models/")
 if not os.path.exists(MODELS_DIR):
     MODELS_DIR = os.path.join(os.getcwd(), "models")
 
 N_SIM       = 10_000
 RANDOM_SEED = 42
 
-# Pénalités de ranking par confédération (identique à build_features.py)
-CONF_RANKING_PENALTY = {
-    "UEFA":0,"CONMEBOL":5,"CAF":15,"AFC":20,"CONCACAF":15,"OFC":30,
-}
-CONF_STRENGTH = {
-    "UEFA":1.00,"CONMEBOL":0.95,"CAF":0.75,"AFC":0.70,"CONCACAF":0.72,"OFC":0.55,
-}
-
 FEATURES = [
     "home_fifa_ranking","away_fifa_ranking","ranking_gap",
-    "ranking_gap_adj","home_rank_adj","away_rank_adj",
-    "home_top20_ratio","away_top20_ratio",
     "home_form5_pts","home_form5_scored","home_form5_conceded",
     "home_form10_pts","home_form10_scored","home_form10_conceded",
     "away_form5_pts","away_form5_scored","away_form5_conceded",
@@ -54,7 +33,6 @@ FEATURES = [
 # ══════════════════════════════════════════════════════════════════
 
 def load_models():
-    # FIX : charger le modèle calibré (pkl) et non le brut (json)
     clf_path = os.path.join(MODELS_DIR, "classifier_calibrated.pkl")
     with open(clf_path, "rb") as f:
         clf = pickle.load(f)
@@ -63,15 +41,9 @@ def load_models():
     rh.load_model(os.path.join(MODELS_DIR, "regressor_home.json"))
     ra.load_model(os.path.join(MODELS_DIR, "regressor_away.json"))
 
-    # FIX : ordre des classes depuis le modèle calibré lui-même
-    # CalibratedClassifierCV expose .classes_ (entiers 0/1/2 du LabelEncoder)
-    # On les mappe via features.json qui stocke l'ordre du LabelEncoder
     with open(os.path.join(MODELS_DIR, "features.json")) as f:
         meta = json.load(f)
-    # classes = ["A","D","H"] dans l'ordre du LabelEncoder (alphabétique)
-    # clf.classes_ = [0, 1, 2] — indices correspondants
-    le_classes = meta["classes"]          # ["A","D","H"]
-    # Mapping index → label : {0:"A", 1:"D", 2:"H"}
+    le_classes = meta["classes"]         
     idx_to_label = {i: c for i, c in enumerate(le_classes)}
 
     print(f"Modeles charges depuis {MODELS_DIR}")
@@ -133,8 +105,6 @@ def compute_features(conn):
         if _norm(n) not in fi_norm:
             fi_norm[_norm(n)] = r["rank"]
 
-    # Priorité : dernier classement FIFA publié depuis fifa_rankings
-    # Écrase fi_norm et mf_rank avec les valeurs les plus récentes
     latest_rankings = pd.read_sql_query("""
         SELECT fr.team_name_fifa, fr.rank
         FROM fifa_rankings fr
@@ -147,7 +117,7 @@ def compute_features(conn):
     """, conn)
     for _, r in latest_rankings.iterrows():
         norm = _norm(r["team_name_fifa"])
-        fi_norm[norm] = int(r["rank"])   # écrase avec le dernier classement
+        fi_norm[norm] = int(r["rank"])  
 
     def get_rank(tid):
         if tid in mf_rank:
@@ -212,23 +182,6 @@ def compute_features(conn):
     conf_map = dict(zip(conf_df["team_id"].astype(int),
                         conf_df["confederation"].str.strip()))
 
-    def get_adj_rank(tid):
-        rank = get_rank(tid)
-        conf = conf_map.get(tid, "")
-        return rank + CONF_RANKING_PENALTY.get(conf, 15)
-
-    def top20_ratio(tid, before, window=20):
-        m = hist[
-            ((hist["home_team_id"]==tid)|(hist["away_team_id"]==tid)) &
-            (hist["match_date"] < before)
-        ].sort_values("match_date", ascending=False).head(window)
-        if len(m)==0: return 0.0
-        count = 0
-        for _, r in m.iterrows():
-            opp = int(r["away_team_id"] if r["home_team_id"]==tid else r["home_team_id"])
-            if get_adj_rank(opp) <= 20: count += 1
-        return round(count / len(m), 4)
-
     all_tids = list(set(
         fixtures["home_team_id"].tolist() + fixtures["away_team_id"].tolist()
     ))
@@ -239,10 +192,8 @@ def compute_features(conn):
         f10 = form(tid, ref, 10)
         tf[tid] = {
             "rank":     get_rank(tid),
-            "rank_adj": get_adj_rank(tid),
             "f5_pts":   f5["pts"],  "f5_sc": f5["sc"],  "f5_co": f5["co"],
             "f10_pts":  f10["pts"], "f10_sc":f10["sc"], "f10_co":f10["co"],
-            "top20":    top20_ratio(tid, ref),
         }
 
     rows = []
@@ -260,11 +211,6 @@ def compute_features(conn):
             "home_fifa_ranking": fh["rank"],
             "away_fifa_ranking": fa["rank"],
             "ranking_gap":       fa["rank"] - fh["rank"],
-            "ranking_gap_adj":   fa["rank_adj"] - fh["rank_adj"],
-            "home_rank_adj":     fh["rank_adj"],
-            "away_rank_adj":     fa["rank_adj"],
-            "home_top20_ratio":  fh["top20"],
-            "away_top20_ratio":  fa["top20"],
             "home_form5_pts":    fh["f5_pts"],
             "home_form5_scored": fh["f5_sc"],
             "home_form5_conceded":fh["f5_co"],
@@ -299,14 +245,10 @@ def predict_fixtures(df, clf, rh, ra, idx_to_label):
     for col in X.columns:
         X[col] = pd.to_numeric(X[col], errors="coerce").fillna(1.0)
 
-    # FIX : clf est le modèle calibré — predict_proba() retourne
-    # les probas dans l'ordre de clf.classes_ (indices 0/1/2)
     pr  = clf.predict_proba(X)
     xgh = np.clip(rh.predict(X), 0, 8)
     xga = np.clip(ra.predict(X), 0, 8)
 
-    # Retrouver les indices H/D/A dans le tableau de probas
-    # idx_to_label = {0:"A", 1:"D", 2:"H"} (ordre alphabétique LabelEncoder)
     label_to_idx = {v: k for k, v in idx_to_label.items()}
     ih  = label_to_idx["H"]
     id_ = label_to_idx["D"]
@@ -326,12 +268,6 @@ def predict_fixtures(df, clf, rh, ra, idx_to_label):
 # ══════════════════════════════════════════════════════════════════
 
 def sim_score(ph, pd_, pa, xgh, xga, rng):
-    """
-    FIX : O(1) garanti.
-    1. Tirage du résultat selon les probabilités prédites.
-    2. Tirage Poisson des buts.
-    3. Correction minimale pour respecter le résultat tiré.
-    """
     probs = np.array([ph, pd_, pa], dtype=np.float64)
     probs /= probs.sum()
     r  = rng.choice(["H","D","A"], p=probs)
@@ -363,8 +299,6 @@ def run_monte_carlo(df, tf):
     pos_counts  = {tid: {1:0, 2:0, 3:0, 4:0} for tid in all_tids}
     qual_third  = {tid: 0 for tid in all_tids}
 
-    # Accumulation des scores simulés par fixture
-    # fixture_id → defaultdict((hg, ag) → count)
     score_counts = {int(m["fixture_id"]): defaultdict(int)
                     for _, m in df.iterrows()}
 
@@ -441,22 +375,6 @@ def run_monte_carlo(df, tf):
 # ══════════════════════════════════════════════════════════════════
 
 def get_predicted_scores(df, score_counts):
-    """
-    Score affiché = moyenne pondérée des scores simulés
-    cohérents avec le résultat dominant.
-
-    Exemple Germany vs Curaçao (84% H, xG 2.8/0.4) :
-      Scores filtrés (Germany gagne) → moyenne hg ≈ 2.9, ag ≈ 0.4
-      → round(2.9)=3, round(0.4)=0 → affiche 3-0
-
-    Exemple Mexico vs South Korea (44% H) :
-      Scores filtrés (Mexico gagne) → moyenne hg ≈ 1.8, ag ≈ 0.8
-      → round(1.8)=2, round(0.8)=1 → affiche 2-1
-
-    La moyenne capture mieux l'espérance du score selon le niveau
-    des équipes, contrairement au mode qui donne toujours 2-1.
-    Fallback sur mode global si aucun score filtré disponible.
-    """
     scores = {}
     for _, m in df.iterrows():
         fid = int(m["fixture_id"])

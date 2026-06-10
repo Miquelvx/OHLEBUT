@@ -1,20 +1,3 @@
-"""
-Entraînement du modèle WC2026 Predictor.
-
-Deux modèles :
-  1. Classificateur XGBoost + calibration isotonique → probabilités H/D/A
-  2. Régresseur XGBoost → home_goals et away_goals attendus
-
-Validation : Walk-forward sur 6 fenêtres temporelles (sans data leakage).
-
-Sorties :
-  - models/classifier.json       : modèle de classification (base XGBoost)
-  - models/regressor_home.json
-  - models/regressor_away.json
-  - models/features.json         : liste des features + importance
-  - models/metrics.json          : métriques de validation
-"""
-
 import os
 import sys
 import json
@@ -32,7 +15,7 @@ from sklearn.metrics import (
 sys.path.append(os.path.join(os.path.dirname(__file__), "../collect"))
 from init_db import get_connection
 
-MODELS_DIR = os.path.join(os.path.dirname(__file__), "models/")
+MODELS_DIR = os.path.join(os.path.dirname(__file__), "../models/")
 os.makedirs(MODELS_DIR, exist_ok=True)
 
 # ------------------------------------------------------------------
@@ -42,11 +25,6 @@ FEATURES = [
     "home_fifa_ranking",
     "away_fifa_ranking",
     "ranking_gap",
-    "ranking_gap_adj",      # NOUVEAU : gap corrigé par pénalité confédération
-    "home_rank_adj",        # NOUVEAU : ranking FIFA + pénalité conf home
-    "away_rank_adj",        # NOUVEAU : ranking FIFA + pénalité conf away
-    "home_top20_ratio",     # NOUVEAU : ratio matchs vs top 20 (expérience elite)
-    "away_top20_ratio",     # NOUVEAU
     "home_form5_pts",
     "home_form5_scored",
     "home_form5_conceded",
@@ -70,7 +48,7 @@ FEATURES = [
     "is_knockout",
 ]
 
-TARGET_CLASS = "result_90"   # H / D / A
+TARGET_CLASS = "result_90"
 TARGET_HOME  = "home_goals"
 TARGET_AWAY  = "away_goals"
 
@@ -80,7 +58,7 @@ WALK_FORWARD_SPLITS = [
     ("2024-03-31", "2024-09-30"),
     ("2024-09-30", "2025-03-31"),
     ("2025-03-31", "2025-09-30"),
-    ("2025-09-30", "2026-06-05"),
+    ("2025-09-30", "2026-06-10"),
 ]
 
 # ------------------------------------------------------------------
@@ -140,10 +118,6 @@ def load_data() -> pd.DataFrame:
 # ------------------------------------------------------------------
 
 def impute(X_train: pd.DataFrame, X_test: pd.DataFrame):
-    """
-    Calcule la médiane sur X_train et l'applique aux deux splits.
-    Retourne (X_train_imp, X_test_imp, medians).
-    """
     X_train = X_train.copy()
     X_test  = X_test.copy()
 
@@ -159,31 +133,15 @@ def impute(X_train: pd.DataFrame, X_test: pd.DataFrame):
     return X_train, X_test, medians
 
 
-# ------------------------------------------------------------------
-# Sample weights : pondérer les matchs par qualité des adversaires
-# Les matchs entre grandes équipes comptent plus à l'entraînement
-# → corrige la sur-représentation des qualifications intra-confédération
-# ------------------------------------------------------------------
-
 def compute_sample_weights(df: pd.DataFrame) -> np.ndarray:
-    """
-    Poids d'entraînement basés sur :
-    1. Ranking moyen des deux équipes (matchs entre tops = plus de poids)
-    2. competition_weight (CdM/Euro > qualifications > amicaux)
-
-    Formule : w = (1 + (100 - avg_rank_adj) / 50) × competition_weight
-    Valeurs typiques :
-      France vs Brésil (avg_adj=4)  × CdM (1.0)   → w ≈ 2.92
-      Iran vs Irak (avg_adj=52)     × qual AFC(0.7) → w ≈ 0.64
-    """
     weights = []
     for _, row in df.iterrows():
-        home_adj = float(row.get("home_rank_adj") or row.get("home_fifa_ranking") or 50)
-        away_adj = float(row.get("away_rank_adj") or row.get("away_fifa_ranking") or 50)
-        avg_adj  = (home_adj + away_adj) / 2
+        home_rank = float(row.get("home_fifa_ranking") or 50)
+        away_rank = float(row.get("away_fifa_ranking") or 50)
+        avg_rank  = (home_rank + away_rank) / 2
 
-        # Plus avg_adj est petit (top équipes), plus le poids est élevé
-        rank_w   = 1.0 + max(0.0, (100 - avg_adj) / 50.0)
+        # Plus avg_rank est petit (top équipes), plus le poids est élevé
+        rank_w   = 1.0 + max(0.0, (100 - avg_rank) / 50.0)
         comp_w   = float(row.get("competition_weight") or 0.5)
         weights.append(rank_w * comp_w)
 
@@ -308,10 +266,6 @@ def walk_forward_validation(df: pd.DataFrame) -> dict:
 # ------------------------------------------------------------------
 
 def train_final_models(df: pd.DataFrame):
-    """
-    Entraîne les modèles finaux sur l'ensemble du dataset.
-    Le classificateur est calibré sur un hold-out temporel de 15%.
-    """
     print("\n" + "=" * 55)
     print("  Entraînement final (toutes données)")
     print("=" * 55)

@@ -1,10 +1,3 @@
-"""
-Scraping des classements FIFA historiques depuis api.fifa.com.
-
-Endpoint : https://api.fifa.com/api/v3/fifarankings/rankings/rankingsbyschedule
-Paramètres : rankingScheduleId=FRS_Male_Football_YYYYMMDD, language=en
-"""
-
 import os
 import sys
 import time
@@ -36,31 +29,13 @@ HEADERS_API = {
 }
 
 
-# ------------------------------------------------------------------
-# FIFA_TO_NORM : nom FIFA exact → team_name_normalized (clé DB)
-#
-# Principe :
-#   teams.team_name_normalized = canonical_name(nom_api) = normalize(nom_fifa_cible)
-#   C'est toujours du texte en minuscules purs (cf. team_utils.NAME_ALIASES).
-#
-#   FIFA_TO_NORM[team_name_fifa] doit retourner exactement cette valeur,
-#   pour que la jointure fifa_rankings → match_features fonctionne.
-#
-# Clé   : nom EXACT retourné par l'API FIFA (sensible à la casse et aux accents)
-# Valeur: valeur de teams.team_name_normalized = normalize_name(nom_fifa_cible)
-#
-# IMPORTANT : les noms FIFA avec accents (Côte d'Ivoire, Türkiye) doivent
-# être saisis avec leurs accents exacts, tels que l'API les retourne.
-# ------------------------------------------------------------------
 FIFA_TO_NORM = {
-    # ── Noms FIFA → noms DB normalisés ─────────────────────────────
-    # FIFA différent du nom DB : on traduit explicitement
     "Korea Republic":                  "south korea",
     "Korea DPR":                       "north korea",
     "IR Iran":                         "iran",
     "USA":                             "united states",
     "China PR":                        "china",
-    "Côte d'Ivoire":                  "ivory coast",    # accent sur Ô obligatoire
+    "Côte d'Ivoire":                  "ivory coast",   
     "Côte d'Ivoire":                  "cote d ivoire", 
     "Congo DR":                        "congo dr",
     "Syria":                           "syria",
@@ -68,28 +43,18 @@ FIFA_TO_NORM = {
     "Kyrgyz Republic":                 "kyrgyzstan",
     "St. Kitts and Nevis":             "saint kitts and nevis",
     "St. Lucia":                       "saint lucia",
-
-    # Bosnia : FIFA="Bosnia and Herzegovina", DB norm="bosnia and herzegovina"
     "Bosnia and Herzegovina":          "bosnia and herzegovina",
-
-    # 7 équipes corrigées
-    "Brunei Darussalam":               "brunei darussalam",   # DB="Brunei"
-    "North Macedonia":                 "north macedonia",     # DB="FYR Macedonia"
-    "Republic of Ireland":             "republic of ireland", # DB="Rep. Of Ireland"
-    "Sao Tome e Principe":             "sao tome e principe", # DB="Sao Tome and Principe"
-    "St Vincent and the Grenadines":   "st vincent and the grenadines",  # DB="St. Vincent / Grenadines"
-    "St. Vincent and the Grenadines":  "st vincent and the grenadines",  # variante avec point
-    "Türkiye":                         "turkiye",             # tréma sur U obligatoire
+    "Brunei Darussalam":               "brunei darussalam",   
+    "North Macedonia":                 "north macedonia",     
+    "Republic of Ireland":             "republic of ireland", 
+    "Sao Tome e Principe":             "sao tome e principe", 
+    "St Vincent and the Grenadines":   "st vincent and the grenadines", 
+    "St. Vincent and the Grenadines":  "st vincent and the grenadines",  
+    "Türkiye":                         "turkiye",            
 }
 
 
 def _normalize(name: str) -> str:
-    """
-    Normalisation identique à team_utils.normalize_name.
-    Dupliquée ici pour éviter l'import circulaire.
-    Utilisée en fallback dans update_match_features() pour les équipes
-    non listées dans FIFA_TO_NORM (dont le nom FIFA == nom normalisé DB).
-    """
     nfkd    = unicodedata.normalize("NFKD", name)
     ascii_n = nfkd.encode("ascii", "ignore").decode("ascii")
     cleaned = re.sub(r"[^a-z0-9 ]", " ", ascii_n.lower())
@@ -241,22 +206,6 @@ def scrape_all_rankings(dates: list[dict]) -> int:
 # ------------------------------------------------------------------
 
 def update_match_features():
-    """
-    Injecte home_fifa_ranking, away_fifa_ranking et ranking_gap dans
-    match_features pour chaque match, en utilisant le classement FIFA
-    le plus récent AVANT la date du match.
-
-    Stratégie de jointure :
-      teams.team_name_normalized  ←→  FIFA_TO_NORM[fifa_rankings.team_name_fifa]
-
-    team_name_normalized est toujours en minuscules purs (invariant garanti
-    par canonical_name dans team_utils.py). FIFA_TO_NORM traduit chaque nom
-    FIFA vers cette même clé normalisée.
-
-    Fallback : si aucun classement n'est disponible AVANT la date du match
-    (cas des matchs de juin 2022, antérieurs à la première publication),
-    on utilise le classement le plus proche APRÈS la date.
-    """
     conn = get_connection()
 
     features_df = pd.read_sql_query("""
@@ -282,10 +231,6 @@ def update_match_features():
 
     print(f"\n📊 Mise à jour de {len(features_df)} matchs...")
 
-    # Construire l'index norm → DataFrame trié par date.
-    # FIFA_TO_NORM traduit team_name_fifa → team_name_normalized.
-    # Fallback : _normalize() pour les équipes dont le nom FIFA == norm DB
-    # (la grande majorité des ~200 équipes non listées dans FIFA_TO_NORM).
     rankings_df["team_norm"] = rankings_df["team_name_fifa"].apply(
         lambda n: FIFA_TO_NORM.get(n, _normalize(n))
     )
@@ -348,18 +293,6 @@ def update_match_features():
 # ------------------------------------------------------------------
 
 def update_teams_ranking():
-    """
-    Injecte le dernier classement FIFA connu dans teams.fifa_ranking
-    et teams.confederation pour chaque équipe.
-
-    C'est cette colonne que les scripts de prédiction utilisent pour
-    construire les features des matchs CdM 2026 (ranking actuel).
-    Sans ce fix, teams.fifa_ranking reste NULL et le modèle reçoit
-    ranking_gap = NULL pour tous les matchs à prédire.
-
-    Utilise la même logique de jointure que update_match_features()
-    (FIFA_TO_NORM + _normalize() en fallback).
-    """
     conn = get_connection()
 
     rankings_df = pd.read_sql_query("""
@@ -418,7 +351,6 @@ def update_teams_ranking():
                 print(f"   - {name}")
             print("\n   → Ajouter les entrées manquantes dans FIFA_TO_NORM")
 
-    # Vérification rapide sur les équipes CdM 2026
     c.execute("""
         SELECT team_name, fifa_ranking
         FROM teams
@@ -448,21 +380,6 @@ def _is_wc2026(c, team_norm: str) -> bool:
 # ------------------------------------------------------------------
 
 def update_wc2026_rankings():
-    """
-    Injecte le ranking FIFA le plus récent dans wc2026_fixtures pour
-    chaque match (colonnes home_fifa_ranking et away_fifa_ranking).
-
-    Pourquoi c'est nécessaire :
-      - Les scripts de prédiction récupèrent le ranking via match_features,
-        qui utilise la dernière apparition de l'équipe comme home/away.
-      - Si une équipe n'a pas joué depuis la dernière publication FIFA,
-        son ranking dans match_features peut être obsolète.
-      - wc2026_fixtures stocke le ranking au moment de la prédiction,
-        garantissant que tous les scripts utilisent la même valeur à jour.
-
-    Stratégie de jointure identique à update_teams_ranking() :
-      teams.team_name_normalized → FIFA_TO_NORM[fifa_rankings.team_name_fifa]
-    """
     conn = get_connection()
 
     # Dernière publication FIFA par équipe
@@ -577,6 +494,6 @@ if __name__ == "__main__":
     scrape_all_rankings(dates)
     update_match_features()
     update_teams_ranking()
-    update_wc2026_rankings()      # NOUVEAU
+    update_wc2026_rankings()    
 
     print("\n🎉 Classements FIFA chargés et features mises à jour.")

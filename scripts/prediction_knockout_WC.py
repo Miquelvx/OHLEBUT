@@ -1,13 +1,3 @@
-"""
-Pipeline 2 — Prédiction phases finales CdM 2026 (v2)
-
-Correction principale :
-  - run_monte_carlo() indexe les stats par (mid, ta, tb)
-  - build_det_bracket() conditionne sur la paire dominante
-    → prob_a + prob_b = 100% garanti
-    → plus de vainqueur fantôme issu d'une autre branche
-"""
-
 import os, sys, json, pickle
 import numpy as np
 import pandas as pd
@@ -18,21 +8,15 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "../collect"))
 from init_db import get_connection
 
 _script_dir = os.path.dirname(os.path.abspath(__file__))
-MODELS_DIR  = os.path.join(_script_dir, "models")
+MODELS_DIR  = os.path.join(_script_dir, "../models/")
 if not os.path.exists(MODELS_DIR):
     MODELS_DIR = os.path.join(os.getcwd(), "models")
 
 N_SIM       = 10_000
 RANDOM_SEED = 42
 
-CONF_RANKING_PENALTY = {
-    "UEFA":0,"CONMEBOL":5,"CAF":15,"AFC":20,"CONCACAF":15,"OFC":30,
-}
-
 FEATURES = [
     "home_fifa_ranking","away_fifa_ranking","ranking_gap",
-    "ranking_gap_adj","home_rank_adj","away_rank_adj",
-    "home_top20_ratio","away_top20_ratio",
     "home_form5_pts","home_form5_scored","home_form5_conceded",
     "home_form10_pts","home_form10_scored","home_form10_conceded",
     "away_form5_pts","away_form5_scored","away_form5_conceded",
@@ -150,27 +134,12 @@ def load_group_data(conn):
                     "f10_sc": float(r["f10_sc"] or 1.2),
                     "f10_co": float(r["f10_co"] or 1.0),
                 }
-    # Ajouter rank_adj et top20 pour toutes les équipes
-    conf_df = pd.read_sql_query(
-        "SELECT team_id, confederation FROM teams WHERE confederation IS NOT NULL", conn)
-    conf_map = dict(zip(conf_df["team_id"].astype(int),
-                        conf_df["confederation"].str.strip()))
-
-    for tid in list(tf.keys()):
-        conf    = conf_map.get(tid, "")
-        penalty = CONF_RANKING_PENALTY.get(conf, 15)
-        tf[tid]["rank_adj"] = tf[tid]["rank"] + penalty
-        tf[tid]["top20"]    = 0.0
-
-    # Priorité : dernier classement FIFA publié depuis fifa_rankings
-    # Même logique de normalisation que load_fifa_ranking.py
     import unicodedata as _ud, re as _re2
     def _norm_fifa(name: str) -> str:
         nfkd = _ud.normalize("NFKD", str(name))
         a    = nfkd.encode("ascii","ignore").decode("ascii")
         return _re2.sub(r"\s+"," ", _re2.sub(r"[^a-z0-9 ]"," ", a.lower())).strip()
 
-    # Aliases FIFA → norm DB (copie des cas clés de FIFA_TO_NORM)
     _FIFA_ALIASES = {
         "Korea Republic":"south korea","Korea DPR":"north korea",
         "IR Iran":"iran","USA":"united states","China PR":"china",
@@ -203,27 +172,20 @@ def load_group_data(conn):
         if tid is None:
             continue
         rank    = float(r["rank"])
-        conf    = conf_map.get(tid, "")
-        penalty = CONF_RANKING_PENALTY.get(conf, 15)
         if tid in tf:
-            tf[tid]["rank"]     = rank
-            tf[tid]["rank_adj"] = rank + penalty
+            tf[tid]["rank"] = rank
         else:
-            tf[tid] = {"rank":rank,"rank_adj":rank+penalty,
+            tf[tid] = {"rank":rank,
                        "f5_pts":1.5,"f5_sc":1.2,"f5_co":1.0,
-                       "f10_pts":1.5,"f10_sc":1.2,"f10_co":1.0,
-                       "top20":0.0}
+                       "f10_pts":1.5,"f10_sc":1.2,"f10_co":1.0}
 
     for _, r in standings.iterrows():
         tid = int(r["team_id"])
         if tid not in tf:
-            conf    = conf_map.get(tid, "")
-            penalty = CONF_RANKING_PENALTY.get(conf, 15)
             rank    = float(r["fifa_ranking"] or 100)
-            tf[tid] = {"rank":rank,"rank_adj":rank+penalty,
+            tf[tid] = {"rank":rank,
                        "f5_pts":1.5,"f5_sc":1.2,"f5_co":1.0,
-                       "f10_pts":1.5,"f10_sc":1.2,"f10_co":1.0,
-                       "top20":0.0}
+                       "f10_pts":1.5,"f10_sc":1.2,"f10_co":1.0}
 
     label_map = dict(zip(standings["team_id"].astype(int), standings["team_label"]))
     print(f"{len(standings)} equipes, {len(thirds)} meilleurs 3emes")
@@ -306,11 +268,6 @@ def predict_match(ta, tb, tf, clf, rh, ra, label_to_idx):
         "away_form10_pts":      fb.get("f10_pts",1.5),
         "away_form10_scored":   fb.get("f10_sc",1.2),
         "away_form10_conceded": fb.get("f10_co",1.0),
-        "ranking_gap_adj":      fb.get("rank_adj",100) - fa.get("rank_adj",100),
-        "home_rank_adj":        fa.get("rank_adj",100),
-        "away_rank_adj":        fb.get("rank_adj",100),
-        "home_top20_ratio":     fa.get("top20",0.0),
-        "away_top20_ratio":     fb.get("top20",0.0),
         "h2h_home_wins":0.33,"h2h_draws":0.33,"h2h_away_wins":0.33,
         "h2h_home_goals_avg":1.2,"h2h_away_goals_avg":1.0,
         "h2h_matches":0,"neutral_venue":1,
@@ -432,17 +389,10 @@ def run_monte_carlo(r16_bracket, tf, clf, rh, ra, label_to_idx):
 # 5. BRACKET DÉTERMINISTE — conditionné sur la paire dominante
 # ══════════════════════════════════════════════════════════════════
 
-def build_det_bracket(r16_bracket, matchup_counts,
-                      pair_score_counts, pair_winner_counts, label_map):
-    """
-    Bracket déterministe par propagation du favori.
-    Les participants de chaque slot sont déduits du vainqueur
-    déterministe du slot précédent — pas de la paire dominante MC.
-    Garantit : prob_a + prob_b = 1.0, pas de vainqueur fantôme.
-    """
+def build_det_bracket(r16_bracket, matchup_counts, pair_score_counts, pair_winner_counts, label_map):
     results = {}
-    winners = {}   # mid -> team_id du vainqueur déterministe
-
+    winners = {} 
+    
     def play(mid, ta, tb):
         sc = pair_score_counts.get((mid, ta, tb), {})
         wc = pair_winner_counts.get((mid, ta, tb), {})

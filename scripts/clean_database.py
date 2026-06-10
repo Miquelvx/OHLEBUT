@@ -1,35 +1,11 @@
-"""
-Nettoyage du training set.
-
-Règles appliquées :
-  - Matchs amicaux (competition_id = 10) : garder uniquement les matchs
-    où au moins une des deux équipes est qualifiée pour la CdM 2026
-  - Toutes les autres compétitions officielles : on garde tout
-
-Lance ce script UNE SEULE FOIS après la collecte complète.
-"""
-
 import sys
 import os
+from datetime import datetime, timezone
 sys.path.append(os.path.dirname(__file__))
 from init_db import get_connection
 
 
 def add_result_columns():
-    """
-    Ajoute les colonnes result_90 et result_winner à la table matches.
-
-    - result_90   : résultat à 90 minutes (H/D/A), jamais influencé par les
-                    prolongations ou les tirs au but
-    - result_winner : vainqueur effectif (H/A uniquement), utile pour les
-                    phases finales. Égal à result_90 sauf pour AET et PEN
-                    où on détermine le vainqueur depuis le score réel.
-
-    Statuts API-Football :
-      FT  = Match Finished (90 min)
-      AET = After Extra Time (prolongations)
-      PEN = Penalties (tirs au but, score à 90min souvent à égalité)
-    """
     conn = get_connection()
     c    = conn.cursor()
 
@@ -40,10 +16,6 @@ def add_result_columns():
         except Exception:
             pass  # colonne déjà existante
 
-    # result_90 : basé sur home_goals - away_goals à 90min
-    # Pour AET/PEN, le score final inclut les prolongations mais pas les pénaltys
-    # On utilise le goal_diff pour déterminer le résultat à 90min
-    # Note : pour les PEN, le score à 90min est toujours nul → result_90 = D
     c.execute("""
         UPDATE matches SET result_90 = CASE
             WHEN status = 'PEN' THEN 'D'
@@ -60,10 +32,6 @@ def add_result_columns():
         except Exception:
             pass
 
-    # result_winner : vainqueur effectif du match
-    # - FT/AET : basé sur le goal_diff (prolongations incluses)
-    # - PEN    : basé sur penalty_home vs penalty_away
-    # - Nul en phase de groupe : NULL (pas de vainqueur)
     c.execute("""
         UPDATE matches SET result_winner = CASE
             WHEN status = 'PEN' AND penalty_home > penalty_away THEN 'H'
@@ -119,10 +87,8 @@ def clean_friendlies():
 
 
 def update_collection_log():
-    """Met à jour collection_log avec le bon nombre de matchs amicaux après nettoyage."""
     conn = get_connection()
     c    = conn.cursor()
-    from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
 
     # Recalculer le nombre réel de matchs par compétition/saison dans matches
@@ -151,7 +117,6 @@ def update_collection_log():
 
 
 def print_summary():
-    """Affiche un résumé du training set après nettoyage."""
     conn = get_connection()
     c    = conn.cursor()
 

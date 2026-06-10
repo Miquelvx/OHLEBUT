@@ -1,20 +1,9 @@
-"""
-Collecte des matchs et équipes de la CdM 2026 via football-data.org.
-
-Endpoints utilisés :
-  GET /v4/competitions/WC/teams?season=2026
-  GET /v4/competitions/WC/matches?season=2026
-
-Limite : 10 requêtes/minute sur le tier gratuit.
-La CdM 2022 est collectée via API-Football (collect_api_football.py).
-"""
-
 import os
 import time
 import requests
 from datetime import datetime, timezone
 from dotenv import load_dotenv
-import config
+import config as config
 load_dotenv()
 
 API_KEY  = config.API_KEY_FOOTBALL_DATA
@@ -159,7 +148,7 @@ def collect_fixtures():
 
 if __name__ == "__main__":
     if not API_KEY:
-        print("❌ FOOTBALL_DATA_API_KEY manquant dans le fichier .env")
+        print("❌ FOOTBALL_DATA_API_KEY manquant")
         exit(1)
 
     print("=" * 55)

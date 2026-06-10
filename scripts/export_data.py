@@ -1,14 +1,3 @@
-"""
-Export JSON — WC2026 Predictor
-
-Génère 5 fichiers JSON depuis la DB SQLite :
-  - data/predictions.json  : résumé général (accueil)
-  - data/groups.json       : phases de groupe + score_freq
-  - data/bracket.json      : bracket phases finales + probabilités
-  - data/training.json     : matchs d'entraînement
-  - data/model.json        : infos modèle + métriques (lues depuis models/)
-"""
-
 import os, sys, json
 import pandas as pd
 from datetime import datetime
@@ -16,8 +5,8 @@ from datetime import datetime
 sys.path.append(os.path.join(os.path.dirname(__file__), "src/collect"))
 from init_db import get_connection
 
-DATA_DIR   = os.path.join(os.path.dirname(__file__), "data")
-MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
+DATA_DIR   = os.path.join(os.path.dirname(__file__), "../data")
+MODELS_DIR = os.path.join(os.path.dirname(__file__), "../models")
 
 def safe_float(v, d=4):
     if v is None: return None
@@ -216,8 +205,6 @@ def export_bracket(conn):
         FROM knockout_fixtures ORDER BY match_id
     """, conn)
 
-    # prob_qualify peut venir de knockout_probabilities (simulate_tournament)
-    # ou de group_standings (predict_groups) — on gère les deux cas
     try:
         probs = pd.read_sql_query("""
             SELECT kp.team_id, kp.team_name, kp.group_name, kp.fifa_ranking,

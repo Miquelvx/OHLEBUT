@@ -1,28 +1,10 @@
-"""
-Collecte des matchs via API-Football (dashboard.api-football.com).
-
-Couvre :
-  - Qualifications CdM 2026 (UEFA, CONMEBOL, CAF, AFC, CONCACAF, OFC)
-  - UEFA Nations League 2022-23 & 2024-25
-  - Euro 2024 qualifications + Euro 2024
-  - Copa América 2024, AFCON 2023/2025, Gold Cup 2023, Asian Cup 2023
-  - Matchs amicaux internationaux 2023-2025
-
-Stratégie :
-  - Checkpoint par (competition_id, season) dans collection_log
-  - Arrêt automatique si quota proche de 100 req/jour
-  - Reprise sans doublon grâce à ON CONFLICT DO NOTHING
-
-Limite : 100 requêtes/jour sur le tier gratuit.
-"""
-
 import os
 import time
 import sqlite3
 import requests
 from datetime import datetime, timezone
 from dotenv import load_dotenv
-import config
+import config as config
 
 load_dotenv()
 
@@ -53,7 +35,6 @@ _requests_remaining = 100
 # ------------------------------------------------------------------
 
 def _get(endpoint: str, params: dict = None) -> dict:
-    """Appel API avec suivi du quota et gestion des erreurs."""
     global _requests_used, _requests_remaining
 
     url = f"{BASE_URL}{endpoint}"
@@ -83,7 +64,6 @@ def _get(endpoint: str, params: dict = None) -> dict:
 
 
 def _quota_ok() -> bool:
-    """Retourne False si on approche de la limite quotidienne."""
     if _requests_remaining <= QUOTA_SAFETY:
         print(f"\n⚠️  Quota presque épuisé ({_requests_remaining} restantes).")
         print("    Relance le script demain pour continuer.")
@@ -117,7 +97,6 @@ def _update_log(source, comp_id, season, status, count):
 
 
 def _get_pending() -> list[tuple]:
-    """Retourne les entrées de collection_log en statut 'pending'."""
     conn = get_connection()
     c    = conn.cursor()
     c.execute("""
@@ -136,11 +115,6 @@ def _get_pending() -> list[tuple]:
 # ------------------------------------------------------------------
 
 def collect_competition(comp_id: int, comp_name: str, season: str) -> bool:
-    """
-    Collecte tous les matchs d'une compétition pour une saison donnée.
-    Gère la pagination automatiquement.
-    Retourne False si le quota est épuisé.
-    """
     print(f"\n📥  {comp_name} {season}  (id={comp_id})")
 
     if not _quota_ok():
@@ -265,11 +239,6 @@ def collect_competition(comp_id: int, comp_name: str, season: str) -> bool:
 
 
 def _is_neutral(comp_id: int, venue_name: str) -> bool:
-    """
-    Heuristique simple : les grandes compétitions sur terrain neutre.
-    Les tournois continentaux et la CdM sont toujours neutres.
-    Pour les amicaux et qualifications, on garde home/away.
-    """
     NEUTRAL_COMPETITIONS = {1, 4, 6, 7, 9, 22, 536}  # CdM 2022, Euros, AFCON, Asian Cup, Copa Am, Gold Cup, CONCACAF NL
     if comp_id in NEUTRAL_COMPETITIONS:
         return True

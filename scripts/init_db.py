@@ -1,17 +1,7 @@
-"""
-Initialisation de la base de données SQLite du projet WC2026 Predictor.
-
-Tables :
-  - teams            : référentiel de toutes les équipes nationales connues
-  - matches          : matchs terminés (training set, 2022-2026)
-  - wc2026_fixtures  : matchs de la CdM 2026 (prédiction + résultats réels)
-  - collection_log   : checkpoint de collecte par compétition/saison
-"""
-
 import sqlite3
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "data/wc2026.db")
+DB_PATH = os.path.join(os.path.dirname(__file__), "../data/wc2026.db")
 
 
 def get_connection():
