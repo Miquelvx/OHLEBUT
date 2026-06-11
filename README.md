@@ -1,6 +1,6 @@
 # OHLEBUT
 
-OHLEBUT est un site de prédictions pour la Coupe du Monde 2026, basé sur l'ensemble des matchs internationnaux depuis la Coupe du Monde 2022. Il prédit les résultats des phases de groupes et du tableau final, et expose ces prédictions sous forme de site statique déployé sur GitHub Pages.
+OHLEBUT est une pipeline de prédictions pour la Coupe du Monde 2026, basé sur l'ensemble des matchs internationnaux depuis la Coupe du Monde 2022. Il prédit les résultats des phases de groupes et du tableau final, et expose ces prédictions sous forme de site statique déployé sur GitHub Pages.
 
 ## Fonctionnalités
 
