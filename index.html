@@ -113,9 +113,14 @@
 
 async function loadData() {
   try {
-    const res  = await fetch('data/predictions.json');
-    const data = await res.json();
-    renderTracker(data.progress);
+    const [predRes, matchesRes] = await Promise.all([
+      fetch('data/predictions.json'),
+      fetch('data/wc2026_matches.json')
+    ]);
+    const data    = await predRes.json();
+    const matches = await matchesRes.json();
+
+    renderTracker(data.progress, matches.matches || []);
     renderAccuracy(data.model.accuracy);
     renderTrainCount(data.model.nb_train_matches);
     renderGroups(data.teams);
@@ -124,14 +129,15 @@ async function loadData() {
   }
 }
 
-function renderTracker(progress) {
+function renderTracker(progress, allMatches) {
   const total = progress.total || 104;
 
-  // Calcul côté client : compter les matchs dont la date est passée
-  const dates = progress.match_dates || [];
+  // Aujourd'hui à minuit (heure locale) — un match du jour n'est pas encore "joué"
   const today = new Date();
-  today.setHours(23, 59, 59, 0); // on considère le jour entier comme joué
-  const playedByDate = dates.filter(d => new Date(d) <= today).length;
+  today.setHours(0, 0, 0, 0);
+
+  // Compter les matchs dont la date est STRICTEMENT antérieure à aujourd'hui
+  const playedByDate = allMatches.filter(m => m.match_date && new Date(m.match_date) < today).length;
 
   // On prend le max entre les vrais résultats en DB et le calcul par date
   // (si le pipeline est re-tourné pendant la CDM, la DB prime)

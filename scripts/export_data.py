@@ -389,6 +389,51 @@ def export_model(conn, metrics, features_meta):
         ],
     }
 
+# ══════════════════════════════════════════════════════════════════
+# wc2026_matches.json
+# ══════════════════════════════════════════════════════════════════
+
+def export_fixtures(conn):
+    c = conn.cursor()
+    # Vérifier que les colonnes FIFA ranking existent
+    c.execute("PRAGMA table_info(wc2026_fixtures)")
+    cols = {r[1] for r in c.fetchall()}
+    home_rank_col = "home_fifa_ranking" if "home_fifa_ranking" in cols else "NULL"
+    away_rank_col = "away_fifa_ranking" if "away_fifa_ranking" in cols else "NULL"
+
+    rows = pd.read_sql_query(f"""
+        SELECT fixture_id,
+               group_name,
+               stage,
+               match_date,
+               home_team_id,
+               away_team_id,
+               home_team_label,
+               away_team_label,
+               {home_rank_col} AS home_fifa_ranking,
+               {away_rank_col} AS away_fifa_ranking
+        FROM wc2026_fixtures
+        ORDER BY match_date, fixture_id
+    """, conn)
+
+    matches = [
+        {
+            "fixture_id":        safe_int(r["fixture_id"]),
+            "group_name":        r["group_name"],
+            "stage":             r["stage"],
+            "match_date":        r["match_date"],
+            "home_team_id":      safe_int(r["home_team_id"]),
+            "away_team_id":      safe_int(r["away_team_id"]),
+            "home_team_label":   r["home_team_label"],
+            "away_team_label":   r["away_team_label"],
+            "home_fifa_ranking": safe_int(r["home_fifa_ranking"]),
+            "away_fifa_ranking": safe_int(r["away_fifa_ranking"]),
+        }
+        for _, r in rows.iterrows()
+    ]
+
+    return {"total": len(matches), "matches": matches}
+
 
 # ══════════════════════════════════════════════════════════════════
 # POINT D'ENTRÉE
@@ -427,18 +472,19 @@ if __name__ == "__main__":
     print(f"  {'Fichier':<25} {'Taille':>8}")
     print(f"  {'─'*35}")
 
-    write_json("predictions.json", export_predictions(conn, metrics))
-    write_json("groups.json",      export_groups(conn))
-    write_json("bracket.json",     export_bracket(conn))
-    write_json("training.json",    export_training(conn))
-    write_json("model.json",       export_model(conn, metrics, features_meta))
+    write_json("predictions.json",   export_predictions(conn, metrics))
+    write_json("groups.json",        export_groups(conn))
+    write_json("bracket.json",       export_bracket(conn))
+    write_json("training.json",      export_training(conn))
+    write_json("model.json",         export_model(conn, metrics, features_meta))
+    write_json("wc2026_matches.json", export_fixtures(conn))
 
     conn.close()
 
     total_kb = sum(
         os.path.getsize(os.path.join(DATA_DIR, f)) / 1024
         for f in ["predictions.json","groups.json","bracket.json",
-                  "training.json","model.json"]
+                  "training.json","model.json","wc2026_matches.json"]
         if os.path.exists(os.path.join(DATA_DIR, f))
     )
     print(f"\n  Total : {total_kb:.0f} KB")

@@ -124,16 +124,6 @@ function matchCard(m, extraClass=''){
   </div>`;
 }
 
-/* ── BRACKET LAYOUT ──
-   R16 : M1..M16  (16 matchs, 2 colonnes de 8 de chaque côté)
-   R8  : R8_1..R8_8
-   QF  : QF1..QF4
-   SF  : SF1, SF2
-   FIN : FIN  + 3RD
-   Disposition : [R16-left | R8-left | QF-left | SF1 | FINAL | SF2 | QF-right | R8-right | R16-right]
-*/
-
-// Ordre des matchs dans chaque colonne (gauche → droite)
 const R16_LEFT  = ['M1','M2','M3','M4','M5','M6','M7','M8'];
 const R16_RIGHT = ['M9','M10','M11','M12','M13','M14','M15','M16'];
 const R8_LEFT   = ['R8_1','R8_2','R8_3','R8_4'];
@@ -149,11 +139,6 @@ function buildBracket(data){
 
   const canvas = document.getElementById('bracketCanvas');
 
-  // Hauteur fixe d'un slot = CARD_H + padding de part et d'autre
-  // R16 : 8 matchs → slot = SLOT_H
-  // R8  : 4 matchs → slot = 2 × SLOT_H
-  // QF  : 2 matchs → slot = 4 × SLOT_H
-  // SF  : 1 match  → slot = 8 × SLOT_H
   const CARD_H  = 80;   // hauteur de la card
   const SLOT_H  = 90;   // hauteur d'un slot R16 (card + marges)
   const N_R16   = 8;    // matchs par demi-bracket
