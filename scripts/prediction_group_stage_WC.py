@@ -80,7 +80,7 @@ def compute_features(conn):
         FROM matches WHERE result_90 IS NOT NULL ORDER BY match_date
     """, conn)
 
-    # Rankings FIFA : dernière valeur connue par équipe depuis match_features
+   # Rankings FIFA : match_features pour l'historique (fallback)
     mf_rank = {}
     for _, r in pd.read_sql_query("""
         SELECT home_team_id as tid, home_fifa_ranking as rank, match_date
@@ -94,17 +94,10 @@ def compute_features(conn):
         if tid not in mf_rank:
             mf_rank[tid] = int(r["rank"])
 
-    teams_df = pd.read_sql_query("SELECT team_id, team_name FROM teams", conn)
-    fi_raw, fi_norm = {}, {}
-    for _, r in pd.read_sql_query(
-        "SELECT team_name_fifa, rank FROM fifa_rankings ORDER BY rank_date DESC",
-        conn).iterrows():
-        n = r["team_name_fifa"]
-        if n not in fi_raw:
-            fi_raw[n] = r["rank"]
-        if _norm(n) not in fi_norm:
-            fi_norm[_norm(n)] = r["rank"]
+    teams_df = pd.read_sql_query(
+        "SELECT team_id, team_name, team_name_normalized FROM teams", conn)
 
+    # Rankings FIFA officiels (source fraîche) — MAX(rank_date) par équipe
     latest_rankings = pd.read_sql_query("""
         SELECT fr.team_name_fifa, fr.rank
         FROM fifa_rankings fr
@@ -115,18 +108,31 @@ def compute_features(conn):
         ) latest ON fr.team_name_fifa = latest.team_name_fifa
                AND fr.rank_date       = latest.last_date
     """, conn)
+
+    # Construire fi_norm (nom normalisé → rank) depuis la table fraîche
+    fi_norm = {}
     for _, r in latest_rankings.iterrows():
-        norm = _norm(r["team_name_fifa"])
-        fi_norm[norm] = int(r["rank"])  
+        fi_norm[_norm(r["team_name_fifa"])] = int(r["rank"])
+
+    # Construire fi_rank_by_id (team_id → rank) via team_name_normalized
+    fi_rank_by_id = {}
+    for _, t in teams_df.iterrows():
+        norm = str(t["team_name_normalized"] or "")
+        if norm in fi_norm:
+            fi_rank_by_id[int(t["team_id"])] = fi_norm[norm]
+    print(f"   Rankings FIFA officiels (source fraîche) : {len(fi_rank_by_id)} équipes CdM")
 
     def get_rank(tid):
+        # Priorité 1 : table fifa_rankings (fraîche, mise à jour par load_fifa_ranking.py)
+        if tid in fi_rank_by_id:
+            return float(fi_rank_by_id[tid])
+        # Priorité 2 : match_features (historique — fallback)
         if tid in mf_rank:
             return float(mf_rank[tid])
+        # Fallback final : chercher par nom dans fi_norm
         rows = teams_df[teams_df["team_id"] == tid]["team_name"].values
-        if len(rows):
-            n = rows[0]
-            if n in fi_raw:          return float(fi_raw[n])
-            if _norm(n) in fi_norm:  return float(fi_norm[_norm(n)])
+        if len(rows) and _norm(rows[0]) in fi_norm:
+            return float(fi_norm[_norm(rows[0])])
         return 100.0
 
     def form(tid, before, w=5):
