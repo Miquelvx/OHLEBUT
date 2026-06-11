@@ -108,14 +108,14 @@
   <p style="margin-top:.5rem">Données : API-sports.io · football-data.org · FIFA Rankings</p>
 </footer>
 
-<script src="../pages/assets.js"></script>
+<script src="pages/assets.js"></script>
 <script>
 
 async function loadData() {
   try {
     const [predRes, matchesRes] = await Promise.all([
-      fetch('../data/predictions.json'),
-      fetch('../data/wc2026_matches.json')
+      fetch('data/predictions.json'),
+      fetch('data/wc2026_matches.json')
     ]);
     const data    = await predRes.json();
     const matches = await matchesRes.json();
